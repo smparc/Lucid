@@ -1,7 +1,8 @@
-torch
-torchvision
-numpy
-h5py
-tqdm
-timm
-fastmri
+torch>=2.0
+torchvision>=0.15
+numpy>=1.24
+h5py>=3.8
+matplotlib>=3.7
+scikit-image>=0.21
+tqdm>=4.65
+jupyter>=1.0

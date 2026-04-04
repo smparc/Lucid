@@ -1,15 +1,26 @@
-# Python
 __pycache__/
 *.pyc
+*.pyo
 .env
+.venv/
 venv/
-env/
-
-# Trained models - These are too large for Git
-*.pth
-*.pt
-
-# IDE / OS
-.vscode/
-.idea/
+*.egg-info/
 .DS_Store
+
+# fastMRI data (download separately — see data/README.md)
+data/knee_singlecoil_train/
+data/knee_singlecoil_val/
+data/*.h5
+
+# Model checkpoints (large files)
+checkpoints/
+*.pt
+*.pth
+
+# Results / outputs
+results/
+*.png
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+notebooks/.ipynb_checkpoints/
