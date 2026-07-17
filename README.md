@@ -1,4 +1,4 @@
-# ClearVision: Accelerated MRI Reconstruction — SwinUNet
+# Lucid: Accelerated MRI Reconstruction — SwinUNet
 
 > Recovering high-quality MRI images from undersampled k-space data using a hybrid Swin Transformer + U-Net architecture.
 
