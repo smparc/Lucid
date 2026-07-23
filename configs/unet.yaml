@@ -1,0 +1,28 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# U-Net Baseline config
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+model:
+  name: unet
+  params:
+    in_channels: 1
+    out_channels: 1
+    base_ch: 32
+    n_levels: 4
+
+
+training:
+  epochs: 60
+  batch_size: 8
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+  amp: true
+  augmentation: true
+  patience: 15
+
+
+logging:
+  experiment_name: unet_baseline
+  tensorboard: true
+  wandb: false

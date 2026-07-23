@@ -1,0 +1,31 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# BT-UNet (Transformer at Bottleneck) config
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+model:
+  name: bt_unet
+  params:
+    in_channels: 1
+    out_channels: 1
+    base_ch: 32
+    n_levels: 4
+    tf_heads: 8
+    tf_layers: 4
+    tf_dropout: 0.1
+
+
+training:
+  epochs: 50
+  batch_size: 6
+  lr: 8.0e-5
+  weight_decay: 1.0e-4
+  amp: true
+  augmentation: true
+  patience: 12
+
+
+logging:
+  experiment_name: bt_unet
+  tensorboard: true
+  wandb: false

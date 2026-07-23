@@ -1,0 +1,112 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Default configuration for Accelerated MRI Reconstruction
+# Override any field via CLI: python main.py train --config configs/swinunet.yaml
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+# ── Model ────────────────────────────────────────────────────────────────────
+model:
+  name: swinunet            # unet | bt_unet | swinunet
+  params:
+    img_size: 320
+    patch_size: 4
+    in_ch: 1
+    out_ch: 1
+    embed_dim: 64
+    ws: 8
+    head_dim: 8
+    dropout: 0.1
+    n_levels: 3
+  data_consistency:
+    enabled: false           # Wrap model with ResidualDCWrapper
+    use_dc: true             # Apply k-space data consistency (requires k-space input)
+
+
+# ── Data ─────────────────────────────────────────────────────────────────────
+data:
+  train_dir: data/knee_singlecoil_train
+  val_dir: data/knee_singlecoil_val
+  center_fraction: 0.08
+  acceleration: 4
+  crop_size: [320, 320]
+  num_workers: 4
+  pin_memory: true
+  cache_dataset: false       # Cache processed slices in memory (faster, more RAM)
+
+
+# ── Training ─────────────────────────────────────────────────────────────────
+training:
+  epochs: 50
+  batch_size: 4
+  seed: 42
+  val_split: 0.1             # Used only if val_dir is not provided separately
+
+
+  # Optimizer
+  optimizer: adam             # adam | adamw
+  lr: 8.0e-5
+  weight_decay: 1.0e-4
+  betas: [0.9, 0.999]
+
+
+  # Scheduler
+  scheduler: warmup_cosine   # warmup_cosine | cosine | step | plateau
+  warmup_epochs: 5           # Linear warmup epochs (critical for transformers)
+  eta_min_factor: 0.01       # min_lr = lr * eta_min_factor
+
+
+  # Loss
+  loss:
+    l1_weight: 0.7
+    ssim_weight: 0.3
+    freq_weight: 0.0          # Frequency domain loss (set >0 to enable)
+    edge_weight: 0.0          # Sobel edge loss
+    perceptual_weight: 0.0    # VGG perceptual loss
+    charbonnier: false         # Use Charbonnier instead of L1
+
+
+  # Regularization
+  gradient_clip: 1.0
+  augmentation: true
+
+
+  # Early stopping
+  patience: 10
+
+
+  # Mixed precision
+  amp: true                  # Automatic Mixed Precision (FP16)
+
+
+  # EMA (Exponential Moving Average)
+  ema:
+    enabled: true
+    decay: 0.999
+    warmup_steps: 1000
+
+
+  # Gradient accumulation (effective_batch = batch_size * gradient_accumulation)
+  gradient_accumulation: 1
+
+
+  # Distributed
+  distributed: false         # Enable DDP multi-GPU training
+
+
+# ── Logging ──────────────────────────────────────────────────────────────────
+logging:
+  output_dir: outputs
+  experiment_name: swinunet_default
+  tensorboard: true
+  wandb: false
+  wandb_project: lucid-mri
+  wandb_entity: null
+  log_interval: 10           # Log every N batches
+  save_top_k: 3             # Keep top-K checkpoints by val_loss
+
+
+# ── Inference ────────────────────────────────────────────────────────────────
+inference:
+  checkpoint: null           # Path to .pt checkpoint
+  export_onnx: false
+  onnx_path: exports/model.onnx

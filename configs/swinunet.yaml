@@ -1,0 +1,33 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# SwinUNet optimized config (best performing — 33.10 dB PSNR)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+model:
+  name: swinunet
+  params:
+    img_size: 320
+    patch_size: 4
+    in_ch: 1
+    out_ch: 1
+    embed_dim: 64
+    ws: 8
+    head_dim: 8
+    dropout: 0.1
+    n_levels: 3
+
+
+training:
+  epochs: 50
+  batch_size: 6
+  lr: 5.0e-5
+  weight_decay: 1.0e-4
+  amp: true
+  augmentation: true
+  patience: 12
+
+
+logging:
+  experiment_name: swinunet_optimized
+  tensorboard: true
+  wandb: true
