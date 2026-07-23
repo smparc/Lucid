@@ -1,12 +1,16 @@
 # Data
 
+
 ## Download fastMRI Dataset
 
+
 The project uses the **fastMRI single-coil knee** dataset.
+
 
 1. Register and download from: https://fastmri.med.nyu.edu/
 2. Select: `Knee MRI` → `Single-coil`
 3. Place the `.h5` files into:
+
 
 ```
 data/
@@ -14,14 +18,18 @@ data/
 └── knee_singlecoil_val/      ← validation volumes (.h5)
 ```
 
+
 ## Dataset Statistics
+
 
 | Split | Volumes |
 |---|---|
 | Training | 973 |
 | Validation | 199 |
 
+
 ## Preprocessing Summary
+
 
 Each `.h5` file contains multi-slice complex k-space data.
 The pipeline:
