@@ -5,22 +5,47 @@ __pycache__/
 .venv/
 venv/
 *.egg-info/
+dist/
+build/
 .DS_Store
+
 
 # fastMRI data (download separately — see data/README.md)
 data/knee_singlecoil_train/
 data/knee_singlecoil_val/
 data/*.h5
 
+
 # Model checkpoints (large files)
 checkpoints/
 *.pt
 *.pth
 
-# Results / outputs
+
+# Outputs & experiment logs
+outputs/
 results/
+exports/
 *.png
+*.onnx
+
+
+# Experiment tracking
+wandb/
+runs/
+
 
 # Jupyter checkpoints
 .ipynb_checkpoints/
 notebooks/.ipynb_checkpoints/
+
+
+# IDE
+.vscode/
+.idea/
+
+
+# Coverage
+htmlcov/
+.coverage
+coverage.xml
