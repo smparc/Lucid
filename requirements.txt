@@ -1,8 +1,43 @@
+# Core ML
 torch>=2.0
 torchvision>=0.15
 numpy>=1.24
+
+
+# Data
 h5py>=3.8
+
+
+# Visualization
 matplotlib>=3.7
+
+
+# Metrics
 scikit-image>=0.21
+
+
+# Training utilities
 tqdm>=4.65
+pyyaml>=6.0
+
+
+# Experiment tracking
+tensorboard>=2.14
+wandb>=0.15
+
+
+# Export / deployment
+onnx>=1.14
+onnxruntime>=1.16
+
+
+# Development
+pytest>=7.4
+pytest-cov>=4.1
+ruff>=0.1.0
+pre-commit>=3.5
+
+
+# Notebooks
 jupyter>=1.0
+ipywidgets>=8.0
