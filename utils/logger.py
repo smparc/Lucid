@@ -92,7 +92,7 @@ class ExperimentLogger:
                 log.warning(f"wandb init failed: {e}")
 
 
-    u/property
+    @property
     def checkpoint_dir(self) -> Path:
         d = self.run_dir / "checkpoints"
         d.mkdir(exist_ok=True)

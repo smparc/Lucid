@@ -71,7 +71,7 @@ class EMAModel:
                 self.shadow[name] = param.data.clone()
 
 
-    u/torch.no_grad()
+    @torch.no_grad()
     def update(self):
         """Update shadow parameters with current model parameters."""
         self.step_count += 1

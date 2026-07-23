@@ -160,7 +160,7 @@ class MRIReconstructionPipeline:
         self._warmup_done = True
 
 
-    .no_grad()
+    @torch.no_grad()
     def reconstruct(
         self,
         input_image: Union[torch.Tensor, np.ndarray],
@@ -227,7 +227,7 @@ class MRIReconstructionPipeline:
         return output
 
 
-    u/torch.no_grad()
+    @torch.no_grad()
     def reconstruct_from_kspace(
         self,
         kspace: np.ndarray,

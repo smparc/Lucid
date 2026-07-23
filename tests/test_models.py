@@ -28,32 +28,32 @@ from models.swinunet import SwinUNet
 # ---------------------------------------------------------------------------
 
 
-u/pytest.fixture
+@pytest.fixture
 def device():
     return torch.device("cpu")
 
 
 
-u/pytest.fixture
+@pytest.fixture
 def dummy_input(device):
     return torch.randn(2, 1, 320, 320, device=device)
 
 
 
-u/pytest.fixture
+@pytest.fixture
 def unet(device):
     return UNet(in_channels=1, out_channels=1, base_ch=32, n_levels=4).to(device)
 
 
 
-u/pytest.fixture
+@pytest.fixture
 def bt_unet(device):
     return BTUNet(in_channels=1, out_channels=1, base_ch=32, n_levels=4,
                   tf_heads=8, tf_layers=2).to(device)
 
 
 
-u/pytest.fixture
+@pytest.fixture
 def swinunet(device):
     return SwinUNet(img_size=320, patch_size=4, in_ch=1, out_ch=1,
                     embed_dim=64, ws=8, head_dim=8, n_levels=3).to(device)

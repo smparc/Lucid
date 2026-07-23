@@ -146,7 +146,7 @@ class FrequencyLoss(nn.Module):
         return diff.mean()
 
 
-    u/staticmethod
+    @staticmethod
     def _get_freq_weight(H: int, W: int, device: torch.device) -> torch.Tensor:
         """Create a weight map that emphasizes high frequencies."""
         cy, cx = H // 2, W // 2

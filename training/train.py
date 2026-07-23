@@ -431,7 +431,7 @@ class Trainer:
         return total_loss / len(loader)
 
 
-    u/torch.no_grad()
+    @torch.no_grad()
     def validate(self, loader):
         """Validate using EMA weights if available."""
         self.model.eval()

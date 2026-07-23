@@ -115,7 +115,7 @@ class DataConsistencyLayer(nn.Module):
         return x_dc
 
 
-    u/staticmethod
+    @staticmethod
     def _image_to_kspace(x: torch.Tensor) -> torch.Tensor:
         """(B, 1, H, W) real image → (B, 1, H, W, 2) k-space."""
         # FFT
@@ -124,7 +124,7 @@ class DataConsistencyLayer(nn.Module):
         return torch.view_as_real(k)
 
 
-    u/staticmethod
+    @staticmethod
     def _kspace_to_image(k: torch.Tensor) -> torch.Tensor:
         """(B, 1, H, W, 2) k-space → (B, 1, H, W) real image."""
         k_complex = torch.view_as_complex(k)

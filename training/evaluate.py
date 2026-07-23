@@ -99,7 +99,7 @@ def load_model(model_name: str, ckpt_path: str, device: torch.device) -> torch.n
 # ---------------------------------------------------------------------------
 
 
-u/torch.no_grad()
+@torch.no_grad()
 def evaluate_model(model, loader, device, n_samples: int = None):
     try:
         from training.losses import CombinedLoss
@@ -135,7 +135,7 @@ def evaluate_model(model, loader, device, n_samples: int = None):
 # ---------------------------------------------------------------------------
 
 
-u/torch.no_grad()
+@torch.no_grad()
 def visualize_reconstructions(
     model,
     dataset,
