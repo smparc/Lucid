@@ -13,41 +13,41 @@ license = {text = "MIT"}
 authors = [{name = "Lucid Team"}]
 keywords = ["mri", "reconstruction", "deep-learning", "swin-transformer", "medical-imaging"]
 classifiers = [
-    "Development Status :: 4 - Beta",
-    "Intended Audience :: Science/Research",
-    "Topic :: Scientific/Engineering :: Medical Science Apps.",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Medical Science Apps.",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
 ]
 
 
 dependencies = [
-    "torch>=2.0",
-    "torchvision>=0.15",
-    "numpy>=1.24",
-    "h5py>=3.8",
-    "matplotlib>=3.7",
-    "scikit-image>=0.21",
-    "tqdm>=4.65",
-    "pyyaml>=6.0",
-    "tensorboard>=2.14",
-    "wandb>=0.15",
-    "onnx>=1.14",
-    "onnxruntime>=1.16",
+    "torch>=2.0",
+    "torchvision>=0.15",
+    "numpy>=1.24",
+    "h5py>=3.8",
+    "matplotlib>=3.7",
+    "scikit-image>=0.21",
+    "tqdm>=4.65",
+    "pyyaml>=6.0",
+    "tensorboard>=2.14",
+    "wandb>=0.15",
+    "onnx>=1.14",
+    "onnxruntime>=1.16",
 ]
 
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=7.4",
-    "pytest-cov>=4.1",
-    "ruff>=0.1.0",
-    "pre-commit>=3.5",
+    "pytest>=7.4",
+    "pytest-cov>=4.1",
+    "ruff>=0.1.0",
+    "pre-commit>=3.5",
 ]
 jupyter = [
-    "jupyter>=1.0",
-    "ipywidgets>=8.0",
+    "jupyter>=1.0",
+    "ipywidgets>=8.0",
 ]
 
 

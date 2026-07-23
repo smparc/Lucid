@@ -13,11 +13,11 @@ ENV PYTHONDONTWRITEBYTECODE=1
 
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3.10 \
-    python3-pip \
-    python3.10-venv \
-    libhdf5-dev \
-    && rm -rf /var/lib/apt/lists/*
+    python3.10 \
+    python3-pip \
+    python3.10-venv \
+    libhdf5-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 
 RUN ln -sf /usr/bin/python3.10 /usr/bin/python
@@ -29,7 +29,7 @@ WORKDIR /app
 # ── Dependencies ─────────────────────────────────────────────────────────────
 COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+    pip install --no-cache-dir -r requirements.txt
 
 
 # ── Application code ─────────────────────────────────────────────────────────

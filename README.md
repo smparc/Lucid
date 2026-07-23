@@ -45,8 +45,8 @@ cd vba_agent2
 
 # Create virtual environment
 python -m venv .venv
-.venv\Scripts\activate  # Windows
-# source .venv/bin/activate  # Linux/Mac
+.venv\Scripts\activate  # Windows
+# source .venv/bin/activate  # Linux/Mac
 
 
 # Install dependencies
@@ -79,8 +79,8 @@ This runs a forward pass through all three architectures and verifies output sha
 
 ```
 data/
-├── knee_singlecoil_train/    ← training volumes
-└── knee_singlecoil_val/      ← validation volumes
+├── knee_singlecoil_train/    ← training volumes
+└── knee_singlecoil_val/      ← validation volumes
 ```
 
 
@@ -137,43 +137,43 @@ python main.py export --ckpt outputs/swinunet_optimized/checkpoints/best.pt --fo
 
 
 ```
-├── main.py                  # Unified CLI entry point
-├── config.py                # YAML config loader with CLI overrides
-├── inference.py             # Production inference pipeline + ONNX export
-├── pyproject.toml           # Package metadata & tool config
-├── requirements.txt         # Python dependencies
-├── Dockerfile               # Containerized training/inference
+├── main.py                  # Unified CLI entry point
+├── config.py                # YAML config loader with CLI overrides
+├── inference.py             # Production inference pipeline + ONNX export
+├── pyproject.toml           # Package metadata & tool config
+├── requirements.txt         # Python dependencies
+├── Dockerfile               # Containerized training/inference
 │
-├── configs/                 # Experiment configurations (YAML)
-│   ├── default.yaml         # Base config (all defaults)
-│   ├── swinunet.yaml        # SwinUNet optimized
-│   ├── unet.yaml            # U-Net baseline
-│   └── bt_unet.yaml         # BT-UNet
+├── configs/                 # Experiment configurations (YAML)
+│   ├── default.yaml         # Base config (all defaults)
+│   ├── swinunet.yaml        # SwinUNet optimized
+│   ├── unet.yaml            # U-Net baseline
+│   └── bt_unet.yaml         # BT-UNet
 │
-├── models/                  # Architecture implementations
-│   ├── unet.py              # Baseline U-Net
-│   ├── bt_unet.py           # U-Net + Transformer bottleneck
-│   └── swinunet.py          # SwinUNet (best model)
+├── models/                  # Architecture implementations
+│   ├── unet.py              # Baseline U-Net
+│   ├── bt_unet.py           # U-Net + Transformer bottleneck
+│   └── swinunet.py          # SwinUNet (best model)
 │
-├── data/                    # Data loading & preprocessing
-│   ├── preprocessing.py     # FastMRI dataset, masks, FFT utils
-│   └── README.md            # Data download instructions
+├── data/                    # Data loading & preprocessing
+│   ├── preprocessing.py     # FastMRI dataset, masks, FFT utils
+│   └── README.md            # Data download instructions
 │
-├── training/                # Training & evaluation
-│   ├── train.py             # Trainer class (AMP, logging, checkpoints)
-│   └── evaluate.py          # Metrics, visualization, comparison
+├── training/                # Training & evaluation
+│   ├── train.py             # Trainer class (AMP, logging, checkpoints)
+│   └── evaluate.py          # Metrics, visualization, comparison
 │
-├── utils/                   # Utilities
-│   ├── logger.py            # TensorBoard + W&B unified logger
-│   └── reproducibility.py   # Seed management
+├── utils/                   # Utilities
+│   ├── logger.py            # TensorBoard + W&B unified logger
+│   └── reproducibility.py   # Seed management
 │
-├── tests/                   # Unit tests (pytest)
-│   ├── test_models.py       # Model forward pass, gradients, shapes
-│   ├── test_data.py         # Preprocessing, masks, FFT
-│   └── test_training.py     # Loss, metrics, config, augmentation
+├── tests/                   # Unit tests (pytest)
+│   ├── test_models.py       # Model forward pass, gradients, shapes
+│   ├── test_data.py         # Preprocessing, masks, FFT
+│   └── test_training.py     # Loss, metrics, config, augmentation
 │
-└── notebooks/               # Analysis & visualization
-    └── results_visualization.ipynb
+└── notebooks/               # Analysis & visualization
+    └── results_visualization.ipynb
 ```
 
 
@@ -240,23 +240,23 @@ All hyperparameters are managed via YAML configs in `configs/`. The system suppo
 Example config:
 ```yaml
 model:
-  name: swinunet
-  params:
-    embed_dim: 64
-    ws: 8
+  name: swinunet
+  params:
+    embed_dim: 64
+    ws: 8
 
 
 training:
-  epochs: 50
-  batch_size: 6
-  lr: 5.0e-5
-  amp: true
+  epochs: 50
+  batch_size: 6
+  lr: 5.0e-5
+  amp: true
 
 
 logging:
-  tensorboard: true
-  wandb: true
-  wandb_project: lucid-mri
+  tensorboard: true
+  wandb: true
+  wandb_project: lucid-mri
 ```
 
 
@@ -320,7 +320,7 @@ docker build -t lucid-mri .
 
 # Train
 docker run --gpus all -v ./data:/app/data -v ./outputs:/app/outputs \
-    lucid-mri train --config configs/swinunet.yaml
+    lucid-mri train --config configs/swinunet.yaml
 
 
 # Inference
@@ -360,10 +360,10 @@ If you use this code in your research, please cite:
 
 ```bibtex
 u/misc{lucid2024,
-  title={Lucid: Accelerated MRI Reconstruction with SwinUNet},
-  author={Lucid Team},
-  year={2024},
-  url={https://github.com/lucid-mri}
+  title={Lucid: Accelerated MRI Reconstruction with SwinUNet},
+  author={Lucid Team},
+  year={2024},
+  url={https://github.com/lucid-mri}
 }
 ```
 
