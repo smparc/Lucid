@@ -1,70 +1,144 @@
 """
 data_consistency.py
 -------------------
-Data Consistency (DC) layer for physics-informed MRI reconstruction.
-
-
-This is the single most impactful technique for MRI reconstruction quality.
-It enforces that the reconstructed image is consistent with the actually
-measured k-space data — the known measurements are replaced back after
-the network's prediction, ensuring the network never hallucates in
-regions where we have ground-truth frequency information.
-
+Data Consistency (DC) for physics-informed MRI reconstruction, plus the unrolled
+cascade architecture built from it.
 
 Theory
 ------
-Given:
-    - x_pred: network's predicted image
-    - k_measured: undersampled k-space data (what was actually acquired)
-    - mask: binary mask showing which k-space lines were sampled
+Accelerated MRI is not a generic image-restoration problem: we know *exactly*
+which Fourier coefficients were measured. A purely learned network is free to
+contradict those measurements, which is precisely how reconstruction networks
+hallucinate anatomy. The DC operator removes that freedom::
 
+    k_pred     = F(x_pred)
+    k_dc[m=1]  = lambda * k_measured + (1 - lambda) * k_pred   # trust the scanner
+    k_dc[m=0]  = k_pred                                        # network fills gaps
+    x_dc       = F^-1(k_dc)
 
-The DC layer performs:
-    k_pred = FFT(x_pred)
-    k_dc[mask] = lambda * k_measured[mask] + (1-lambda) * k_pred[mask]  # weighted replacement
-    k_dc[~mask] = k_pred[~mask]                                        # network fills gaps
-    x_dc = IFFT(k_dc)
+With ``lambda = 1`` the measured lines are restored exactly and the network can
+only ever modify unobserved frequencies. Lower values allow the network to
+denoise the measurements too, which helps at low SNR. ``lambda`` is learnable.
 
+Cascading these with a denoiser gives an *unrolled* network — the standard
+formulation for state-of-the-art MRI reconstruction (Schlemper et al. 2018;
+Hammernik et al. 2018). Each stage is one iteration of a proximal-gradient
+solver where the proximal operator has been replaced by a learned network.
 
-Where lambda controls the strength of data consistency (1.0 = hard, <1 = soft).
+What was wrong before
+---------------------
+The previous implementation could not work, for three independent reasons:
 
+1. ``_kspace_to_image`` ended in ``x.abs()``, discarding phase. A DC layer that
+   destroys phase cannot be cascaded: the next FFT sees a zero-phase image, so
+   the measured coefficients it writes back are wrong.
+2. ``_image_to_kspace`` took a *real* image, implicitly asserting zero phase,
+   which is false for any MRI reconstruction.
+3. Most decisively, nothing ever called it with data. The trainer invoked
+   ``model(x)`` while ``ResidualDCWrapper.forward`` needed ``(x, k, mask)``;
+   with ``k_measured=None`` the wrapper's guard silently skipped DC entirely.
+   The config flag ``data_consistency.enabled`` therefore did nothing at all.
+
+All three are fixed here: everything is complex end to end, the transforms come
+from :mod:`models.fourier`, and the dataset now supplies k-space and the mask so
+the trainer can actually route them through.
 
 References
 ----------
-Schlemper et al., "A Deep Cascade of CNNs for Dynamic MR Image Reconstruction", TMI 2018
-Hammernik et al., "Learning a Variational Network for Reconstruction of Accelerated MRI Data", MRM 2018
+Schlemper et al., "A Deep Cascade of CNNs for Dynamic MR Image Reconstruction",
+IEEE TMI 2018.
+Hammernik et al., "Learning a Variational Network for Reconstruction of
+Accelerated MRI Data", MRM 2018.
+Sriram et al., "End-to-End Variational Networks for Accelerated MRI
+Reconstruction", MICCAI 2020.
 """
 
+from __future__ import annotations
+
+import math
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
+from models.fourier import complex_abs_chan, fft2c_chan, ifft2c_chan
+
+
+def _broadcast_mask(mask: torch.Tensor, like: torch.Tensor) -> torch.Tensor:
+    """
+    Reshape a sampling mask to broadcast against ``(B, 2, H, W)`` k-space.
+
+    Accepts the shapes the pipeline actually produces:
+    ``(W,)``, ``(1, W)``, ``(B, W)``, ``(B, 1, W)``, ``(B, 1, 1, W)``,
+    ``(B, 1, H, W)``. Cartesian undersampling masks whole phase-encode columns,
+    so a 1D mask over the last axis is the normal case and is broadcast over
+    rows.
+    """
+    B, _, H, W = like.shape
+
+    if mask.dim() == 1:  # (W,)
+        mask = mask.view(1, 1, 1, -1)
+    elif mask.dim() == 2:  # (1, W) or (B, W)
+        mask = mask.view(mask.shape[0], 1, 1, mask.shape[-1])
+    elif mask.dim() == 3:  # (B, 1, W)
+        mask = mask.unsqueeze(2)
+    elif mask.dim() != 4:
+        raise ValueError(f"Unsupported mask shape {tuple(mask.shape)}")
+
+    if mask.shape[-1] != W:
+        raise ValueError(
+            f"Mask width {mask.shape[-1]} does not match k-space width {W}. "
+            f"The mask must be generated at the same resolution the model "
+            f"operates on."
+        )
+    if mask.shape[-2] not in (1, H):
+        raise ValueError(f"Mask height {mask.shape[-2]} incompatible with {H}")
+
+    return mask.to(dtype=like.dtype, device=like.device)
 
 
 class DataConsistencyLayer(nn.Module):
     """
-    Data Consistency layer that enforces fidelity to measured k-space.
-
-
-    This can be inserted after any reconstruction network or cascaded
-    between multiple network stages.
-
+    Enforce fidelity to the measured k-space samples.
 
     Parameters
     ----------
-    learnable_lambda : bool — if True, lambda is a learnable parameter
-    lambda_init      : float — initial data consistency weight (1.0 = hard DC)
+    learnable_lambda
+        If True, the mixing weight is trained.
+    lambda_init
+        Initial weight in ``[0, 1]``. ``1.0`` is hard data consistency.
+    hard
+        Skip the mixing entirely and always overwrite measured positions. Cheaper
+        and strictly correct when the measurements are noise-free, which is the
+        case for retrospectively undersampled data.
     """
 
-
-    def __init__(self, learnable_lambda: bool = True, lambda_init: float = 1.0):
+    def __init__(
+        self,
+        learnable_lambda: bool = True,
+        lambda_init: float = 1.0,
+        hard: bool = False,
+    ):
         super().__init__()
-        if learnable_lambda:
-            self.lam = nn.Parameter(torch.tensor(lambda_init))
-        else:
-            self.register_buffer("lam", torch.tensor(lambda_init))
+        self.hard = hard
 
+        # Stored as a logit so that sigmoid() keeps lambda in [0, 1] without a
+        # clamp. The original code applied sigmoid to lambda_init directly,
+        # which turned a requested "hard DC" of 1.0 into an actual weight of
+        # sigmoid(1.0) = 0.73 — a silent 27% leak of network output into
+        # measured frequencies.
+        eps = 1e-4
+        p = min(max(lambda_init, eps), 1 - eps)
+        logit = math.log(p / (1 - p))
+
+        if learnable_lambda:
+            self.lam_logit = nn.Parameter(torch.tensor(logit, dtype=torch.float32))
+        else:
+            self.register_buffer("lam_logit", torch.tensor(logit, dtype=torch.float32))
+
+    @property
+    def lam(self) -> torch.Tensor:
+        """Current mixing weight in ``[0, 1]``."""
+        return torch.sigmoid(self.lam_logit)
 
     def forward(
         self,
@@ -73,173 +147,180 @@ class DataConsistencyLayer(nn.Module):
         mask: torch.Tensor,
     ) -> torch.Tensor:
         """
-        Apply data consistency.
-
-
         Parameters
         ----------
-        x_pred      : (B, 1, H, W) — network's image-space prediction
-        k_measured  : (B, 1, H, W, 2) — measured undersampled k-space [real, imag]
-        mask        : (B, 1, 1, W) or (B, 1, H, W) — binary sampling mask
-
+        x_pred
+            ``(B, 2, H, W)`` complex image-space prediction.
+        k_measured
+            ``(B, 2, H, W)`` measured (already masked) k-space.
+        mask
+            Binary sampling mask, broadcastable to the k-space shape.
 
         Returns
         -------
-        x_dc : (B, 1, H, W) — data-consistent reconstruction
+        ``(B, 2, H, W)`` data-consistent complex image.
         """
-        # Convert prediction to k-space
-        k_pred = self._image_to_kspace(x_pred)  # (B, 1, H, W, 2)
+        if x_pred.shape[1] != 2:
+            raise ValueError(
+                f"DataConsistencyLayer operates on complex (B, 2, H, W) tensors; "
+                f"got {tuple(x_pred.shape)}. Magnitude-only reconstruction cannot "
+                f"be made data-consistent, because writing measured coefficients "
+                f"back requires phase."
+            )
+
+        k_pred = fft2c_chan(x_pred)
+        m = _broadcast_mask(mask, k_pred)
+
+        if self.hard:
+            k_dc = (1 - m) * k_pred + m * k_measured
+        else:
+            lam = self.lam.to(k_pred.dtype)
+            k_dc = (1 - m) * k_pred + m * (lam * k_measured + (1 - lam) * k_pred)
+
+        return ifft2c_chan(k_dc)
 
 
-        # Expand mask to match k-space shape
-        if mask.dim() == 3:
-            mask = mask.unsqueeze(-1)  # (B, 1, W, 1) -> need (B, 1, H, W, 1)
-        while mask.dim() < k_pred.dim():
-            mask = mask.unsqueeze(-1)
-
-
-        mask = mask.expand_as(k_pred)
-
-
-        # Soft data consistency: blend measured and predicted where mask=1
-        lam = torch.sigmoid(self.lam)  # Constrain lambda to [0, 1]
-        k_dc = torch.where(
-            mask > 0.5,
-            lam * k_measured + (1 - lam) * k_pred,
-            k_pred,
-        )
-
-
-        # Convert back to image space
-        x_dc = self._kspace_to_image(k_dc)
-        return x_dc
-
-
-    @staticmethod
-    def _image_to_kspace(x: torch.Tensor) -> torch.Tensor:
-        """(B, 1, H, W) real image → (B, 1, H, W, 2) k-space."""
-        # FFT
-        k = torch.fft.fft2(x, norm="ortho")
-        k = torch.fft.fftshift(k, dim=(-2, -1))
-        return torch.view_as_real(k)
-
-
-    @staticmethod
-    def _kspace_to_image(k: torch.Tensor) -> torch.Tensor:
-        """(B, 1, H, W, 2) k-space → (B, 1, H, W) real image."""
-        k_complex = torch.view_as_complex(k)
-        k_complex = torch.fft.ifftshift(k_complex, dim=(-2, -1))
-        x = torch.fft.ifft2(k_complex, norm="ortho")
-        return x.abs()
-
-
-
-class CascadedDCNetwork(nn.Module):
+class CascadedNet(nn.Module):
     """
-    Cascaded reconstruction: Network → DC → Network → DC → ... → Output
+    Unrolled reconstruction: ``(denoiser -> DC)`` repeated ``n_cascades`` times.
 
-
-    This interleaves learned reconstruction with physics-based data consistency,
-    which is the standard approach in SOTA MRI reconstruction (Hammernik et al. 2018).
-
-
-    Each cascade stage refines the reconstruction while maintaining consistency
-    with the acquired data.
-
+    This is the architecture that actually closes the gap to state of the art.
+    A single feed-forward pass has to solve the inverse problem in one shot; an
+    unrolled network instead takes several small, physics-corrected steps, and
+    each DC layer re-anchors the estimate to the measurements so errors cannot
+    compound across stages.
 
     Parameters
     ----------
-    base_model_fn : callable — function that returns a reconstruction network
-    n_cascades    : int — number of cascade stages
-    share_weights : bool — if True, all cascades share the same network weights
+    denoiser_fn
+        Zero-argument callable returning a fresh denoiser network. It must map
+        ``(B, 2, H, W) -> (B, 2, H, W)``.
+    n_cascades
+        Number of unrolled iterations.
+    share_weights
+        Reuse one denoiser across all stages (recurrent-style). Cuts parameters
+        by ``n_cascades`` at some cost in accuracy.
+    hard_dc
+        Use hard data consistency.
+    output
+        ``"complex"`` returns ``(B, 2, H, W)``; ``"magnitude"`` returns
+        ``(B, 1, H, W)``, which is what the image-domain losses and metrics
+        consume.
     """
 
-
-    def __init__(self, base_model_fn, n_cascades: int = 3, share_weights: bool = False):
+    def __init__(
+        self,
+        denoiser_fn,
+        n_cascades: int = 3,
+        share_weights: bool = False,
+        hard_dc: bool = False,
+        output: str = "magnitude",
+    ):
         super().__init__()
-        self.n_cascades = n_cascades
+        if n_cascades < 1:
+            raise ValueError(f"n_cascades must be >= 1, got {n_cascades}")
+        if output not in ("complex", "magnitude"):
+            raise ValueError(f"output must be 'complex' or 'magnitude', got {output!r}")
 
+        self.n_cascades = n_cascades
+        self.share_weights = share_weights
+        self.output = output
 
         if share_weights:
-            base_model = base_model_fn()
-            self.networks = nn.ModuleList([base_model] * n_cascades)
+            shared = denoiser_fn()
+            # A plain `[shared] * n` registers the same module n times, so
+            # parameter counting double-counts it. Holding one module and
+            # indexing it keeps the count honest.
+            self.networks = nn.ModuleList([shared])
         else:
-            self.networks = nn.ModuleList([base_model_fn() for _ in range(n_cascades)])
+            self.networks = nn.ModuleList([denoiser_fn() for _ in range(n_cascades)])
 
+        self.dc_layers = nn.ModuleList(
+            [
+                DataConsistencyLayer(learnable_lambda=not hard_dc, hard=hard_dc)
+                for _ in range(n_cascades)
+            ]
+        )
 
-        self.dc_layers = nn.ModuleList([
-            DataConsistencyLayer(learnable_lambda=True) for _ in range(n_cascades)
-        ])
-
+    def _net(self, i: int) -> nn.Module:
+        return self.networks[0] if self.share_weights else self.networks[i]
 
     def forward(
         self,
         x_input: torch.Tensor,
-        k_measured: torch.Tensor,
-        mask: torch.Tensor,
+        k_measured: torch.Tensor | None = None,
+        mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """
         Parameters
         ----------
-        x_input     : (B, 1, H, W) — zero-filled reconstruction (initial input)
-        k_measured  : (B, 1, H, W, 2) — measured k-space data
-        mask        : (B, 1, 1, W) or similar — sampling mask
-
-
-        Returns
-        -------
-        x : (B, 1, H, W) — final reconstruction after all cascades
+        x_input
+            ``(B, 2, H, W)`` zero-filled complex reconstruction.
+        k_measured, mask
+            Measured k-space and its sampling mask. If either is None the DC
+            steps are skipped and the model degrades to a plain cascade of
+            denoisers — useful for ablations, and loudly documented rather than
+            silently assumed.
         """
         x = x_input
+        use_dc = k_measured is not None and mask is not None
 
+        for i in range(self.n_cascades):
+            x = self._net(i)(x)
+            if use_dc:
+                x = self.dc_layers[i](x, k_measured, mask)
 
-        for network, dc in zip(self.networks, self.dc_layers):
-            # Residual learning: network predicts the correction/artifact
-            x_refined = network(x)
-            # Data consistency ensures fidelity to measurements
-            x = dc(x_refined, k_measured, mask)
+        return complex_abs_chan(x) if self.output == "magnitude" else x
 
-
-        return x
-
+    @property
+    def lambdas(self) -> list[float]:
+        """Current DC weights, one per stage — informative to log during training."""
+        return [float(dc.lam.detach()) for dc in self.dc_layers]
 
 
 class ResidualDCWrapper(nn.Module):
     """
-    Wraps any reconstruction model with residual learning + data consistency.
+    Wrap any reconstruction network with a single data-consistency step.
 
+    ``x_out = |DC(Net(x_in), k, m)|``
 
-    Instead of predicting the full image, the network predicts the residual
-    (artifact pattern) which is subtracted from the input. This is combined
-    with a DC layer for physics-informed refinement.
+    The residual behaviour that used to live here now belongs to the backbones
+    themselves (they zero-initialise their output layer and add the input), so
+    this wrapper is purely about physics.
 
-
-    x_output = DC(x_input + Network(x_input), k_measured, mask)
+    Parameters
+    ----------
+    model
+        Backbone mapping ``(B, 2, H, W) -> (B, 2, H, W)``.
+    use_dc
+        Apply the DC step.
+    output
+        ``"complex"`` or ``"magnitude"``.
     """
 
-
-    def __init__(self, model: nn.Module, use_dc: bool = True):
+    def __init__(self, model: nn.Module, use_dc: bool = True, output: str = "magnitude"):
         super().__init__()
         self.model = model
         self.use_dc = use_dc
-        if use_dc:
-            self.dc = DataConsistencyLayer(learnable_lambda=True)
-
+        self.output = output
+        self.dc = DataConsistencyLayer(learnable_lambda=True) if use_dc else None
 
     def forward(
         self,
         x_input: torch.Tensor,
-        k_measured: torch.Tensor = None,
-        mask: torch.Tensor = None,
+        k_measured: torch.Tensor | None = None,
+        mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        # Residual learning
-        residual = self.model(x_input)
-        x_refined = x_input + residual
+        x = self.model(x_input)
 
+        if self.use_dc:
+            if k_measured is None or mask is None:
+                raise ValueError(
+                    "ResidualDCWrapper was configured with use_dc=True but received "
+                    "no k-space or mask. Set data.return_kspace=true in the config, "
+                    "or set model.data_consistency.enabled=false. (Silently skipping "
+                    "DC here is what made the original implementation a no-op.)"
+                )
+            x = self.dc(x, k_measured, mask)
 
-        # Data consistency (only if k-space data is provided)
-        if self.use_dc and k_measured is not None and mask is not None:
-            x_refined = self.dc(x_refined, k_measured, mask)
-
-
-        return x_refined
+        return complex_abs_chan(x) if self.output == "magnitude" else x
