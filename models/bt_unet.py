@@ -108,7 +108,12 @@ class TransformerBottleneck(nn.Module):
             batch_first=True,
             norm_first=True,
         )
-        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=n_layers)
+        # Nested tensors are a padding optimisation for variable-length
+        # sequences and are incompatible with norm_first; our token sequences
+        # are dense and fixed-length, so there is nothing to gain from them.
+        self.transformer = nn.TransformerEncoder(
+            encoder_layer, num_layers=n_layers, enable_nested_tensor=False
+        )
         # A final norm is required with norm_first=True: otherwise the residual
         # stream leaves the stack unnormalised and the decoder sees drifting scale.
         self.norm = nn.LayerNorm(d_model)
