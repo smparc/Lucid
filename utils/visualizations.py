@@ -1,570 +1,556 @@
 """
-visualization.py
-----------------
-Advanced visualization tools for MRI reconstruction analysis.
+visualizations.py
+-----------------
+Publication-quality figures for reconstruction analysis.
 
+Contents
+--------
+* Reconstruction comparison panels (input / prediction / target / error / k-space).
+* Training curves.
+* k-space sampling diagrams.
+* Architecture comparison charts.
+* Swin attention maps and attention rollout.
 
-Features:
-- Attention map visualization (what the SwinUNet is "looking at")
-- Error heatmaps (where the model fails)
-- Frequency-domain error analysis
-- Multi-scale feature visualization
-- Interactive comparison grids
+Attention capture
+-----------------
+The previous ``AttentionExtractor`` registered forward hooks and then looked for
+attention weights in the module's *output*::
+
+    if isinstance(output, tuple) and len(output) >= 2:   # never true
+        ...
+    elif hasattr(module, "_attention_weights"):          # never set
+
+``WindowAttention.forward`` returns a single tensor and never stored its weights,
+so the hook matched nothing, ``get_attention_maps()`` always returned an empty
+list, and every plotting function short-circuited on "No attention maps
+captured". The extractor here instead switches the attention modules out of
+their fused path and recomputes the softmax explicitly, so the maps are real —
+and it restores the fast path afterwards.
 """
 
+from __future__ import annotations
 
+import logging
 from pathlib import Path
 
-import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn.functional as F
 
+log = logging.getLogger(__name__)
+
+__all__ = [
+    "AttentionExtractor",
+    "plot_architecture_comparison",
+    "plot_attention_maps",
+    "plot_attention_rollout",
+    "plot_kspace_analysis",
+    "plot_reconstruction_comparison",
+    "plot_training_curves",
+]
+
+
+def _save(fig, save_path: str | None, dpi: int = 200) -> str | None:
+    if save_path:
+        Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(save_path, dpi=dpi, bbox_inches="tight")
+    plt.close(fig)
+    return save_path
+
+
+def _to_numpy(x) -> np.ndarray:
+    if isinstance(x, torch.Tensor):
+        x = x.detach().float().cpu().numpy()
+    return np.asarray(x).squeeze()
+
+
+# ---------------------------------------------------------------------------
+# Reconstruction comparison
+# ---------------------------------------------------------------------------
+
 
 def plot_reconstruction_comparison(
-    input_img: np.ndarray,
-    prediction: np.ndarray,
-    ground_truth: np.ndarray,
-    psnr_val: float = None,
-    ssim_val: float = None,
-    save_path: str = None,
+    input_img,
+    prediction,
+    ground_truth,
+    psnr_val: float | None = None,
+    ssim_val: float | None = None,
+    save_path: str | None = None,
     show_error: bool = True,
     show_frequency: bool = True,
-):
+    error_scale: float = 0.25,
+) -> str | None:
     """
-    Publication-quality reconstruction comparison figure.
+    A publication panel: input, prediction, ground truth, error, spectral error.
 
-
-    Shows: Input | Prediction | Ground Truth | Error Map | Freq Error
+    Parameters
+    ----------
+    error_scale
+        Upper limit of the error colour map as a fraction of the target's
+        dynamic range. Autoscaling each error map to its own maximum makes
+        panels from different models incomparable — a good reconstruction and a
+        bad one both render as a full-range heatmap. A fixed fraction keeps the
+        colour scale meaningful across figures.
     """
+    input_img = _to_numpy(input_img)
+    prediction = _to_numpy(prediction)
+    ground_truth = _to_numpy(ground_truth)
+
     n_cols = 3 + int(show_error) + int(show_frequency)
-    fig, axes = plt.subplots(1, n_cols, figsize=(4 * n_cols, 4))
+    fig, axes = plt.subplots(1, n_cols, figsize=(4 * n_cols, 4.2))
 
+    vmax = float(ground_truth.max()) or 1.0
 
-    # Input
-    axes[0].imshow(input_img, cmap="gray", vmin=0, vmax=1)
-    axes[0].set_title("Input\n(Undersampled)", fontsize=10)
-    axes[0].axis("off")
+    axes[0].imshow(input_img, cmap="gray", vmin=0, vmax=vmax)
+    axes[0].set_title("Input\n(zero-filled)", fontsize=10)
 
-
-    # Prediction
-    axes[1].imshow(prediction, cmap="gray", vmin=0, vmax=1)
     title = "Prediction"
-    if psnr_val and ssim_val:
-        title += f"\nPSNR: {psnr_val:.2f} dB | SSIM: {ssim_val:.4f}"
+    if psnr_val is not None and ssim_val is not None:
+        title += f"\nPSNR {psnr_val:.2f} dB | SSIM {ssim_val:.4f}"
+    axes[1].imshow(prediction, cmap="gray", vmin=0, vmax=vmax)
     axes[1].set_title(title, fontsize=10)
-    axes[1].axis("off")
 
-
-    # Ground truth
-    axes[2].imshow(ground_truth, cmap="gray", vmin=0, vmax=1)
-    axes[2].set_title("Ground Truth", fontsize=10)
-    axes[2].axis("off")
-
+    axes[2].imshow(ground_truth, cmap="gray", vmin=0, vmax=vmax)
+    axes[2].set_title("Ground truth", fontsize=10)
 
     col = 3
-
-
-    # Error heatmap
     if show_error:
         error = np.abs(prediction - ground_truth)
-        im = axes[col].imshow(error, cmap="hot", vmin=0, vmax=error.max() * 0.8)
-        axes[col].set_title(f"Error Map\n(MAE: {error.mean():.4f})", fontsize=10)
-        axes[col].axis("off")
+        im = axes[col].imshow(error, cmap="inferno", vmin=0, vmax=vmax * error_scale)
+        axes[col].set_title(f"|Error|\n(MAE {error.mean():.4f})", fontsize=10)
         plt.colorbar(im, ax=axes[col], fraction=0.046, pad=0.04)
         col += 1
 
-
-    # Frequency domain error
     if show_frequency:
         pred_fft = np.log1p(np.abs(np.fft.fftshift(np.fft.fft2(prediction))))
         gt_fft = np.log1p(np.abs(np.fft.fftshift(np.fft.fft2(ground_truth))))
-        freq_error = np.abs(pred_fft - gt_fft)
-        im = axes[col].imshow(freq_error, cmap="inferno")
-        axes[col].set_title("Frequency Error\n(log |ΔF|)", fontsize=10)
-        axes[col].axis("off")
+        im = axes[col].imshow(np.abs(pred_fft - gt_fft), cmap="viridis")
+        axes[col].set_title("Spectral error\n(log magnitude)", fontsize=10)
         plt.colorbar(im, ax=axes[col], fraction=0.046, pad=0.04)
 
+    for ax in axes:
+        ax.axis("off")
 
-    plt.tight_layout()
-    if save_path:
-        Path(save_path).parent.mkdir(parents=True, exist_ok=True)
-        plt.savefig(save_path, dpi=200, bbox_inches="tight")
-    plt.close()
+    fig.tight_layout()
+    return _save(fig, save_path)
 
+
+# ---------------------------------------------------------------------------
+# Training curves
+# ---------------------------------------------------------------------------
 
 
 def plot_training_curves(
     history: dict,
-    save_path: str = None,
-    title: str = "Training Progress",
-):
-    """
-    Publication-quality training curves with dual y-axis for loss and metrics.
-    """
-    fig = plt.figure(figsize=(16, 4))
-    gs = gridspec.GridSpec(1, 4, figure=fig, wspace=0.35)
+    save_path: str | None = None,
+    title: str = "Training progress",
+) -> str | None:
+    """Loss, PSNR, SSIM and LR panels from a run's history dict."""
 
+    def series(*names: str):
+        for name in names:
+            if name in history and history[name]:
+                return history[name]
+        return None
 
-    epochs = range(1, len(history["train_loss"]) + 1)
+    train_loss = series("epoch/train_loss", "train_loss")
+    val_loss = series("epoch/val_loss", "val_loss")
+    val_psnr = series("epoch/val_psnr", "val_psnr")
+    val_ssim = series("epoch/val_ssim", "val_ssim")
+    lr = series("epoch/lr", "lr")
+    epochs = history.get("epoch") or list(range(1, len(train_loss or []) + 1))
 
+    panels = []
+    if train_loss or val_loss:
+        panels.append(
+            ("Loss", [(train_loss, "Train", "C0"), (val_loss, "Validation", "C3")], None)
+        )
+    if val_psnr:
+        panels.append(("PSNR (dB)", [(val_psnr, "Validation", "C2")], "max"))
+    if val_ssim:
+        panels.append(("SSIM", [(val_ssim, "Validation", "C4")], "max"))
+    if lr:
+        panels.append(("Learning rate", [(lr, "LR", "k")], "log"))
 
-    # Loss curves
-    ax1 = fig.add_subplot(gs[0])
-    ax1.plot(epochs, history["train_loss"], "b-", alpha=0.8, label="Train", linewidth=1.5)
-    ax1.plot(epochs, history["val_loss"], "r-", alpha=0.8, label="Val", linewidth=1.5)
-    ax1.set_xlabel("Epoch")
-    ax1.set_ylabel("Loss")
-    ax1.set_title("Loss")
-    ax1.legend(frameon=False)
-    ax1.grid(True, alpha=0.3)
+    if not panels:
+        raise ValueError("History contains none of the expected metric series")
 
-
-    # PSNR
-    ax2 = fig.add_subplot(gs[1])
-    ax2.plot(epochs, history["val_psnr"], "g-", linewidth=1.5)
-    ax2.axhline(y=max(history["val_psnr"]), color="g", linestyle="--", alpha=0.5)
-    ax2.set_xlabel("Epoch")
-    ax2.set_ylabel("PSNR (dB)")
-    ax2.set_title(f"PSNR (best: {max(history['val_psnr']):.2f} dB)")
-    ax2.grid(True, alpha=0.3)
-
-
-    # SSIM
-    ax3 = fig.add_subplot(gs[2])
-    ax3.plot(epochs, history["val_ssim"], "m-", linewidth=1.5)
-    ax3.axhline(y=max(history["val_ssim"]), color="m", linestyle="--", alpha=0.5)
-    ax3.set_xlabel("Epoch")
-    ax3.set_ylabel("SSIM")
-    ax3.set_title(f"SSIM (best: {max(history['val_ssim']):.4f})")
-    ax3.grid(True, alpha=0.3)
-
-
-    # LR schedule
-    if "lr" in history:
-        ax4 = fig.add_subplot(gs[3])
-        ax4.plot(epochs, history["lr"], "k-", linewidth=1.5)
-        ax4.set_xlabel("Epoch")
-        ax4.set_ylabel("Learning Rate")
-        ax4.set_title("LR Schedule")
-        ax4.set_yscale("log")
-        ax4.grid(True, alpha=0.3)
-
+    fig, axes = plt.subplots(1, len(panels), figsize=(4.5 * len(panels), 4), squeeze=False)
+    for ax, (name, curves, style) in zip(axes[0], panels, strict=True):
+        for values, label, colour in curves:
+            if values:
+                ax.plot(epochs[: len(values)], values, color=colour, label=label, linewidth=1.6)
+        ax.set_xlabel("Epoch")
+        ax.set_ylabel(name)
+        ax.grid(True, alpha=0.3)
+        if style == "log":
+            ax.set_yscale("log")
+        elif style == "max" and curves[0][0]:
+            best = max(curves[0][0])
+            ax.axhline(best, color="grey", linestyle="--", alpha=0.6)
+            name = f"{name} (best {best:.4g})"
+        ax.set_title(name)
+        if len(curves) > 1:
+            ax.legend(frameon=False)
 
     fig.suptitle(title, fontsize=14, fontweight="bold", y=1.02)
+    fig.tight_layout()
+    return _save(fig, save_path)
 
 
-    if save_path:
-        Path(save_path).parent.mkdir(parents=True, exist_ok=True)
-        plt.savefig(save_path, dpi=200, bbox_inches="tight")
-    plt.close()
-
+# ---------------------------------------------------------------------------
+# k-space
+# ---------------------------------------------------------------------------
 
 
 def plot_kspace_analysis(
-    kspace_full: np.ndarray,
-    mask: np.ndarray,
-    reconstruction: np.ndarray,
-    save_path: str = None,
-):
-    """
-    Visualize the k-space sampling pattern and its effect on reconstruction.
-    """
-    fig, axes = plt.subplots(1, 4, figsize=(16, 4))
+    kspace_full,
+    mask,
+    reconstruction,
+    save_path: str | None = None,
+) -> str | None:
+    """Show the sampling pattern and its consequence for the reconstruction."""
+    kspace_full = np.asarray(kspace_full).squeeze()
+    mask = _to_numpy(mask)
+    reconstruction = _to_numpy(reconstruction)
 
+    fig, axes = plt.subplots(1, 4, figsize=(16, 4.2))
 
-    # Full k-space (log magnitude)
     kspace_mag = np.log1p(np.abs(np.fft.fftshift(kspace_full)))
     axes[0].imshow(kspace_mag, cmap="gray")
     axes[0].set_title("Full k-space\n(log magnitude)")
-    axes[0].axis("off")
 
+    mask_2d = np.tile(mask.reshape(1, -1), (kspace_full.shape[0], 1)) if mask.ndim == 1 else mask
+    sampled = mask_2d.sum() / mask_2d.size
+    axes[1].imshow(mask_2d, cmap="gray", aspect="auto")
+    axes[1].set_title(f"Sampling mask\n{sampled * 100:.1f}% acquired (R={1 / sampled:.1f})")
 
-    # Sampling mask
-    if mask.ndim == 1:
-        mask_2d = np.tile(mask, (kspace_full.shape[0], 1))
-    else:
-        mask_2d = mask
-    axes[1].imshow(mask_2d, cmap="gray")
-    axes[1].set_title(f"Sampling Mask\n({mask.sum()/mask.size*100:.1f}% sampled)")
-    axes[1].axis("off")
-
-
-    # Undersampled k-space
     axes[2].imshow(kspace_mag * mask_2d, cmap="gray")
-    axes[2].set_title("Undersampled k-space")
-    axes[2].axis("off")
+    axes[2].set_title("Acquired k-space")
 
-
-    # Reconstruction
-    axes[3].imshow(reconstruction, cmap="gray", vmin=0, vmax=1)
+    axes[3].imshow(reconstruction, cmap="gray", vmin=0, vmax=float(reconstruction.max()) or 1.0)
     axes[3].set_title("Reconstruction")
-    axes[3].axis("off")
+
+    for ax in axes:
+        ax.axis("off")
+
+    fig.tight_layout()
+    return _save(fig, save_path)
 
 
-    plt.tight_layout()
-    if save_path:
-        Path(save_path).parent.mkdir(parents=True, exist_ok=True)
-        plt.savefig(save_path, dpi=200, bbox_inches="tight")
-    plt.close()
-
+# ---------------------------------------------------------------------------
+# Architecture comparison
+# ---------------------------------------------------------------------------
 
 
 def plot_architecture_comparison(
     results: dict,
-    save_path: str = None,
-):
+    save_path: str | None = None,
+    metric_errors: dict | None = None,
+) -> str | None:
     """
-    Bar chart comparing architectures across metrics.
-    
-    results: {model_name: {"psnr": float, "ssim": float, "val_loss": float, "params_m": float}}
+    Bar and scatter comparison across architectures.
+
+    Parameters
+    ----------
+    results
+        ``{name: {"psnr": float, "ssim": float, "params_m": float, ...}}``
+    metric_errors
+        Optional ``{name: {"psnr": (low, high), "ssim": (low, high)}}`` giving
+        confidence intervals, drawn as error bars. A bar chart of point
+        estimates invites the reader to believe differences the data may not
+        support; show the interval whenever you have it.
     """
-    models = list(results.keys())
-    n = len(models)
+    models = list(results)
+    if not models:
+        raise ValueError("No results to plot")
 
+    palette = plt.cm.tab10(np.linspace(0, 1, 10))[: len(models)]
+    fig, axes = plt.subplots(1, 3, figsize=(13, 4.2))
 
-    fig, axes = plt.subplots(1, 3, figsize=(12, 4))
+    for ax, key, label, fmt in (
+        (axes[0], "psnr", "PSNR (dB)", "{:.2f}"),
+        (axes[1], "ssim", "SSIM", "{:.4f}"),
+    ):
+        values = [results[m][key] for m in models]
+        errors = None
+        if metric_errors:
+            errors = np.array(
+                [
+                    [
+                        values[i] - metric_errors[m][key][0],
+                        metric_errors[m][key][1] - values[i],
+                    ]
+                    for i, m in enumerate(models)
+                ]
+            ).T
 
+        bars = ax.bar(
+            models,
+            values,
+            color=palette,
+            edgecolor="black",
+            linewidth=0.6,
+            yerr=errors,
+            capsize=4,
+        )
+        ax.set_ylabel(label)
+        ax.set_title(f"{label} comparison")
+        ax.tick_params(axis="x", rotation=20)
+        span = max(values) - min(values) or 1.0
+        ax.set_ylim(min(values) - 0.35 * span, max(values) + 0.35 * span)
+        for bar, value in zip(bars, values, strict=True):
+            ax.text(
+                bar.get_x() + bar.get_width() / 2,
+                bar.get_height() + 0.04 * span,
+                fmt.format(value),
+                ha="center",
+                fontsize=9,
+            )
 
-    # PSNR
-    psnrs = [results[m]["psnr"] for m in models]
-    colors = ["#2196F3", "#FF9800", "#4CAF50"][:n]
-    bars = axes[0].bar(models, psnrs, color=colors, edgecolor="black", linewidth=0.5)
-    axes[0].set_ylabel("PSNR (dB)")
-    axes[0].set_title("PSNR Comparison")
-    for bar, val in zip(bars, psnrs):
-        axes[0].text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.1,
-                     f"{val:.2f}", ha="center", fontsize=9)
-
-
-    # SSIM
-    ssims = [results[m]["ssim"] for m in models]
-    bars = axes[1].bar(models, ssims, color=colors, edgecolor="black", linewidth=0.5)
-    axes[1].set_ylabel("SSIM")
-    axes[1].set_title("SSIM Comparison")
-    for bar, val in zip(bars, ssims):
-        axes[1].text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.002,
-                     f"{val:.4f}", ha="center", fontsize=9)
-
-
-    # Parameters vs PSNR (efficiency scatter)
     if all("params_m" in results[m] for m in models):
         params = [results[m]["params_m"] for m in models]
-        axes[2].scatter(params, psnrs, c=colors, s=200, edgecolors="black", linewidth=0.5, zorder=5)
-        for i, m in enumerate(models):
-            axes[2].annotate(m, (params[i], psnrs[i]), textcoords="offset points",
-                           xytext=(5, 5), fontsize=9)
+        psnrs = [results[m]["psnr"] for m in models]
+        axes[2].scatter(params, psnrs, c=palette, s=180, edgecolors="black", zorder=5)
+        for i, name in enumerate(models):
+            axes[2].annotate(
+                name,
+                (params[i], psnrs[i]),
+                textcoords="offset points",
+                xytext=(6, 6),
+                fontsize=9,
+            )
         axes[2].set_xlabel("Parameters (M)")
         axes[2].set_ylabel("PSNR (dB)")
-        axes[2].set_title("Efficiency: Params vs Quality")
+        axes[2].set_title("Quality vs capacity")
         axes[2].grid(True, alpha=0.3)
+    else:
+        axes[2].axis("off")
 
-
-    plt.tight_layout()
-    if save_path:
-        Path(save_path).parent.mkdir(parents=True, exist_ok=True)
-        plt.savefig(save_path, dpi=200, bbox_inches="tight")
-    plt.close()
-
+    fig.tight_layout()
+    return _save(fig, save_path)
 
 
 # ---------------------------------------------------------------------------
-# Attention Visualization
+# Attention
 # ---------------------------------------------------------------------------
 
 
 class AttentionExtractor:
     """
-    Hook-based attention map extractor for Swin Transformer models.
+    Capture attention maps from Swin ``WindowAttention`` modules.
 
+    Attention weights are not part of the forward output, so a plain forward
+    hook cannot see them. This switches each module out of its fused
+    scaled-dot-product path (which never materialises the attention matrix at
+    all) and recomputes the softmax explicitly during the hook.
 
-    Usage:
-        extractor = AttentionExtractor(model)
-        output = model(input_tensor)
-        attn_maps = extractor.get_attention_maps()
-        plot_attention_maps(input_img, attn_maps)
-        extractor.remove_hooks()
+    Usage
+    -----
+        with AttentionExtractor(model) as extractor:
+            model(input_tensor)
+            maps = extractor.get_attention_maps()
     """
 
-
     def __init__(self, model: torch.nn.Module):
+        self.model = model
         self.attention_maps: list[torch.Tensor] = []
-        self.hooks = []
-        self._register_hooks(model)
+        self._patched: list[tuple[torch.nn.Module, bool]] = []
+        self._hooks: list = []
+        self._install()
 
+    def _install(self) -> None:
+        from models.swinunet import WindowAttention
 
-    def _register_hooks(self, model: torch.nn.Module):
-        """Register forward hooks on all attention softmax outputs."""
-        for name, module in model.named_modules():
-            # Match common attention patterns in Swin/ViT
-            if ("attn" in name.lower() and hasattr(module, "softmax")) or module.__class__.__name__ in ("WindowAttention", "MultiheadAttention"):
-                hook = module.register_forward_hook(self._hook_fn)
-                self.hooks.append(hook)
+        for module in self.model.modules():
+            if not isinstance(module, WindowAttention):
+                continue
+            # Remember the fast-path setting so it can be restored on exit.
+            self._patched.append((module, module.use_sdpa))
+            module.use_sdpa = False
+            self._hooks.append(module.register_forward_hook(self._capture))
 
+        if not self._patched:
+            log.warning(
+                "No WindowAttention modules found; attention extraction only "
+                "supports Swin-based models."
+            )
 
-    def _hook_fn(self, module, input, output):
-        """Capture attention weights from the module output."""
-        if isinstance(output, tuple) and len(output) >= 2:
-            # MultiheadAttention returns (attn_output, attn_weights)
-            attn_weights = output[1]
-            if attn_weights is not None:
-                self.attention_maps.append(attn_weights.detach().cpu())
-        elif hasattr(module, "_attention_weights"):
-            # Some implementations store weights as attribute
-            self.attention_maps.append(module._attention_weights.detach().cpu())
+    def _capture(self, module, inputs, output) -> None:
+        """
+        Recompute the attention matrix for the captured window tokens.
 
+        Storing it inside ``forward`` instead would cost memory on every
+        training step; this pays the cost only while extracting.
+        """
+        x = inputs[0]
+        mask = inputs[1] if len(inputs) > 1 else None
+        with torch.no_grad():
+            Bnw, N, _ = x.shape
+            qkv = module.qkv(x).reshape(Bnw, N, 3, module.n_heads, module.head_dim)
+            q, k, _ = qkv.permute(2, 0, 3, 1, 4).unbind(0)
+            attn = (q @ k.transpose(-2, -1)) * module.scale + module._bias()
+            if mask is not None:
+                n_windows = mask.shape[0]
+                attn = attn + mask.unsqueeze(1).repeat(Bnw // n_windows, 1, 1, 1)
+            self.attention_maps.append(attn.softmax(dim=-1).detach().cpu())
 
     def get_attention_maps(self) -> list[torch.Tensor]:
-        """Return collected attention maps and clear buffer."""
-        maps = self.attention_maps.copy()
+        """Return the captured maps and clear the buffer."""
+        maps = list(self.attention_maps)
         self.attention_maps.clear()
         return maps
 
-
-    def remove_hooks(self):
-        """Remove all registered hooks."""
-        for hook in self.hooks:
+    def remove_hooks(self) -> None:
+        """Remove hooks and restore the fused attention path."""
+        for hook in self._hooks:
             hook.remove()
-        self.hooks.clear()
+        self._hooks.clear()
+        for module, original in self._patched:
+            module.use_sdpa = original
+        self._patched.clear()
 
+    def __enter__(self) -> AttentionExtractor:
+        return self
+
+    def __exit__(self, *exc_info) -> None:
+        self.remove_hooks()
+
+
+def _attention_to_image(attn: torch.Tensor, height: int, width: int) -> np.ndarray:
+    """Reduce an attention tensor to a normalised ``(height, width)`` heatmap."""
+    if attn.dim() == 4:  # (windows, heads, N, N)
+        attn = attn.mean(dim=(0, 1))
+    elif attn.dim() == 3:
+        attn = attn.mean(dim=0)
+
+    received = attn.mean(dim=0)  # mean attention each token receives
+    side = int(np.sqrt(received.shape[0]))
+    grid = received[: side * side].reshape(side, side).float()
+
+    resized = (
+        F.interpolate(
+            grid.unsqueeze(0).unsqueeze(0),
+            size=(height, width),
+            mode="bilinear",
+            align_corners=False,
+        )
+        .squeeze()
+        .numpy()
+    )
+
+    span = resized.max() - resized.min()
+    return (resized - resized.min()) / (span + 1e-8)
 
 
 def plot_attention_maps(
-    input_img: np.ndarray,
+    input_img,
     attention_maps: list[torch.Tensor],
     layer_indices: list[int] | None = None,
-    head_indices: list[int] | None = None,
-    save_path: str = None,
-    max_display: int = 8,
-):
-    """
-    Visualize attention maps from transformer layers overlaid on the input.
-
-
-    Parameters
-    ----------
-    input_img : (H, W) array, input MR image
-    attention_maps : list of attention tensors from AttentionExtractor
-    layer_indices : which layers to display (None = evenly spaced selection)
-    head_indices : which attention heads to display (None = average across heads)
-    save_path : path to save figure
-    max_display : maximum number of attention maps to show
-    """
+    save_path: str | None = None,
+    max_display: int = 6,
+) -> str | None:
+    """Overlay attention heatmaps from selected layers on the input image."""
     if not attention_maps:
-        print("No attention maps captured. Ensure hooks are registered correctly.")
-        return
-
-
-    # Select layers to display
-    n_layers = len(attention_maps)
-    if layer_indices is None:
-        step = max(1, n_layers // max_display)
-        layer_indices = list(range(0, n_layers, step))[:max_display]
-
-
-    n_show = len(layer_indices)
-    fig, axes = plt.subplots(2, n_show, figsize=(3 * n_show, 6))
-    if n_show == 1:
-        axes = axes.reshape(2, 1)
-
-
-    img_h, img_w = input_img.shape[:2]
-
-
-    for col, layer_idx in enumerate(layer_indices):
-        if layer_idx >= len(attention_maps):
-            continue
-
-
-        attn = attention_maps[layer_idx]  # (B, nH, seq_len, seq_len) or (B, seq, seq)
-
-
-        # Average over batch
-        if attn.dim() == 4:
-            # (B, nH, seq, seq)
-            if head_indices is not None:
-                attn = attn[:, head_indices].mean(dim=(0, 1))
-            else:
-                attn = attn.mean(dim=(0, 1))  # (seq, seq)
-        elif attn.dim() == 3:
-            attn = attn.mean(dim=0)  # (seq, seq)
-
-
-        # Compute attention rollout: mean attention received per token
-        attn_map = attn.mean(dim=0)  # (seq_len,) — avg attention each token receives
-        seq_len = attn_map.shape[0]
-        side = int(np.sqrt(seq_len))
-
-
-        if side * side == seq_len:
-            attn_2d = attn_map.reshape(side, side).numpy()
-        else:
-            # Non-square: best effort reshape
-            attn_2d = attn_map[:side * side].reshape(side, side).numpy()
-
-
-        # Resize to image dimensions
-        attn_resized = np.array(
-            F.interpolate(
-                torch.from_numpy(attn_2d).unsqueeze(0).unsqueeze(0).float(),
-                size=(img_h, img_w),
-                mode="bilinear",
-                align_corners=False,
-            ).squeeze()
+        raise ValueError(
+            "No attention maps supplied. Capture them with AttentionExtractor "
+            "while running a forward pass."
         )
 
+    input_img = _to_numpy(input_img)
+    height, width = input_img.shape[:2]
 
-        # Normalize to [0, 1]
-        attn_resized = (attn_resized - attn_resized.min()) / (attn_resized.max() - attn_resized.min() + 1e-8)
+    if layer_indices is None:
+        step = max(1, len(attention_maps) // max_display)
+        layer_indices = list(range(0, len(attention_maps), step))[:max_display]
 
+    n_show = len(layer_indices)
+    fig, axes = plt.subplots(2, n_show, figsize=(3.2 * n_show, 6.4), squeeze=False)
+    vmax = float(input_img.max()) or 1.0
 
-        # Row 1: Input with attention overlay
-        axes[0, col].imshow(input_img, cmap="gray", vmin=0, vmax=1)
-        axes[0, col].imshow(attn_resized, cmap="jet", alpha=0.5)
+    for col, layer_idx in enumerate(layer_indices):
+        heatmap = _attention_to_image(attention_maps[layer_idx], height, width)
+
+        axes[0, col].imshow(input_img, cmap="gray", vmin=0, vmax=vmax)
+        axes[0, col].imshow(heatmap, cmap="jet", alpha=0.45)
         axes[0, col].set_title(f"Layer {layer_idx}", fontsize=9)
-        axes[0, col].axis("off")
 
+        axes[1, col].imshow(heatmap, cmap="inferno")
+        axes[1, col].set_title(f"Attention L{layer_idx}", fontsize=9)
 
-        # Row 2: Raw attention heatmap
-        im = axes[1, col].imshow(attn_resized, cmap="inferno")
-        axes[1, col].set_title(f"Attn Map L{layer_idx}", fontsize=9)
-        axes[1, col].axis("off")
+        for row in (0, 1):
+            axes[row, col].axis("off")
 
-
-    axes[0, 0].set_ylabel("Overlay", fontsize=10)
-    axes[1, 0].set_ylabel("Raw Attention", fontsize=10)
-
-
-    fig.suptitle("Swin Transformer Attention Visualization", fontsize=12, fontweight="bold")
-    plt.tight_layout()
-
-
-    if save_path:
-        Path(save_path).parent.mkdir(parents=True, exist_ok=True)
-        plt.savefig(save_path, dpi=200, bbox_inches="tight")
-    plt.close()
-
+    fig.suptitle("Swin attention", fontsize=13, fontweight="bold")
+    fig.tight_layout()
+    return _save(fig, save_path)
 
 
 def plot_attention_rollout(
-    input_img: np.ndarray,
+    input_img,
     attention_maps: list[torch.Tensor],
-    save_path: str = None,
+    save_path: str | None = None,
     discard_ratio: float = 0.9,
-):
+) -> str | None:
     """
-    Attention rollout: multiplicative propagation of attention through layers.
+    Attention rollout: propagate attention multiplicatively through the layers.
 
-
-    This gives a more accurate picture of what the final layer 'sees' by
-    combining attention from all layers multiplicatively.
-
-
-    Parameters
-    ----------
-    input_img : (H, W) input image
-    attention_maps : list of (B, nH, seq, seq) attention tensors
-    save_path : output path
-    discard_ratio : fraction of lowest-attention connections to discard (sparsify)
+    Following Abnar & Zuidema (2020), an identity term is added at each layer to
+    account for the residual connection, and the lowest-weight connections are
+    discarded before renormalisation to suppress the diffuse background that
+    otherwise dominates after several matrix products.
     """
     if not attention_maps:
-        return
+        raise ValueError("No attention maps supplied")
 
+    input_img = _to_numpy(input_img)
+    height, width = input_img.shape[:2]
 
     result = None
     for attn in attention_maps:
-        # Average over batch and heads
         if attn.dim() == 4:
-            attn_avg = attn.mean(dim=(0, 1))  # (seq, seq)
+            averaged = attn.mean(dim=(0, 1))
         elif attn.dim() == 3:
-            attn_avg = attn.mean(dim=0)
+            averaged = attn.mean(dim=0)
         else:
             continue
 
+        seq_len = averaged.shape[0]
+        averaged = 0.5 * averaged + 0.5 * torch.eye(seq_len)
 
-        seq_len = attn_avg.shape[0]
-
-
-        # Add identity (residual connection contribution)
-        attn_avg = 0.5 * attn_avg + 0.5 * torch.eye(seq_len)
-
-
-        # Discard low-attention connections
         if discard_ratio > 0:
-            flat = attn_avg.flatten()
-            threshold = flat.quantile(discard_ratio)
-            attn_avg = attn_avg * (attn_avg > threshold).float()
+            threshold = averaged.flatten().quantile(discard_ratio)
+            averaged = averaged * (averaged > threshold).float()
 
-
-        # Re-normalize rows
-        attn_avg = attn_avg / (attn_avg.sum(dim=-1, keepdim=True) + 1e-8)
-
-
-        # Multiply through layers
+        averaged = averaged / (averaged.sum(dim=-1, keepdim=True) + 1e-8)
         if result is None:
-            result = attn_avg
-        else:
-            # Only multiply if dimensions match
-            if result.shape == attn_avg.shape:
-                result = torch.matmul(attn_avg, result)
-
+            result = averaged
+        elif result.shape == averaged.shape:
+            result = averaged @ result
 
     if result is None:
-        return
+        raise ValueError("Attention maps had unexpected dimensionality")
 
+    heatmap = _attention_to_image(result.unsqueeze(0).unsqueeze(0), height, width)
 
-    # Take attention from CLS token (first row) or average
-    rollout_map = result.mean(dim=0)  # Average attention received
-    seq_len = rollout_map.shape[0]
-    side = int(np.sqrt(seq_len))
+    fig, axes = plt.subplots(1, 3, figsize=(12, 4.2))
+    vmax = float(input_img.max()) or 1.0
 
-
-    if side * side != seq_len:
-        side = int(np.ceil(np.sqrt(seq_len)))
-        rollout_map = torch.cat([rollout_map, torch.zeros(side * side - seq_len)])
-
-
-    rollout_2d = rollout_map[:side * side].reshape(side, side).numpy()
-
-
-    img_h, img_w = input_img.shape[:2]
-    rollout_resized = np.array(
-        F.interpolate(
-            torch.from_numpy(rollout_2d).unsqueeze(0).unsqueeze(0).float(),
-            size=(img_h, img_w),
-            mode="bilinear",
-            align_corners=False,
-        ).squeeze()
-    )
-    rollout_resized = (rollout_resized - rollout_resized.min()) / (rollout_resized.max() - rollout_resized.min() + 1e-8)
-
-
-    fig, axes = plt.subplots(1, 3, figsize=(12, 4))
-
-
-    axes[0].imshow(input_img, cmap="gray", vmin=0, vmax=1)
+    axes[0].imshow(input_img, cmap="gray", vmin=0, vmax=vmax)
     axes[0].set_title("Input")
-    axes[0].axis("off")
 
+    axes[1].imshow(input_img, cmap="gray", vmin=0, vmax=vmax)
+    axes[1].imshow(heatmap, cmap="jet", alpha=0.45)
+    axes[1].set_title("Rollout overlay")
 
-    axes[1].imshow(input_img, cmap="gray", vmin=0, vmax=1)
-    axes[1].imshow(rollout_resized, cmap="jet", alpha=0.5)
-    axes[1].set_title("Attention Rollout Overlay")
-    axes[1].axis("off")
-
-
-    im = axes[2].imshow(rollout_resized, cmap="inferno")
-    axes[2].set_title("Rollout Map")
-    axes[2].axis("off")
+    im = axes[2].imshow(heatmap, cmap="inferno")
+    axes[2].set_title("Rollout map")
     plt.colorbar(im, ax=axes[2], fraction=0.046, pad=0.04)
 
+    for ax in axes:
+        ax.axis("off")
 
-    fig.suptitle("Attention Rollout (All Layers Combined)", fontsize=12, fontweight="bold")
-    plt.tight_layout()
-
-
-    if save_path:
-        Path(save_path).parent.mkdir(parents=True, exist_ok=True)
-        plt.savefig(save_path, dpi=200, bbox_inches="tight")
-    plt.close()
+    fig.suptitle("Attention rollout (all layers)", fontsize=13, fontweight="bold")
+    fig.tight_layout()
+    return _save(fig, save_path)

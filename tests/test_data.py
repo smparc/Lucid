@@ -50,7 +50,7 @@ class TestMaskGeneration:
     def test_centre_is_always_acquired(self, fn):
         num_cols, cf = 320, 0.08
         mask = fn((256, num_cols), center_fraction=cf, acceleration=4, seed=0)
-        n_center = int(round(num_cols * cf))
+        n_center = round(num_cols * cf)
         pad = (num_cols - n_center + 1) // 2
         assert torch.all(mask[0, pad : pad + n_center] == 1)
 

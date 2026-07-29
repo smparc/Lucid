@@ -302,7 +302,7 @@ class PerceptualLoss(nn.Module):
     def forward(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         x, y = self._preprocess(pred), self._preprocess(target)
         loss = pred.new_zeros(())
-        for block, weight in zip(self.blocks, self.weights):
+        for block, weight in zip(self.blocks, self.weights, strict=True):
             x = block(x)
             with torch.no_grad():
                 y = block(y)

@@ -41,7 +41,7 @@ import torch
 
 def _center_lines(num_cols: int, center_fraction: float) -> tuple[int, int]:
     """Return ``(num_low_freqs, start_index)`` for the fully sampled centre."""
-    num_low_freqs = int(round(num_cols * center_fraction))
+    num_low_freqs = round(num_cols * center_fraction)
     start = (num_cols - num_low_freqs + 1) // 2
     return num_low_freqs, start
 
@@ -128,7 +128,7 @@ def equispaced_mask(
         # lines once the centre (already counted) is excluded.
         adjusted = (num_cols - num_low_freqs) / outer_budget
         generator = rng if rng is not None else np.random.default_rng(seed)
-        offset = generator.integers(0, max(1, int(round(adjusted)))) if randomize_offset else 0
+        offset = generator.integers(0, max(1, round(adjusted))) if randomize_offset else 0
         positions = np.arange(offset, num_cols - 1, adjusted)
         mask[np.round(positions).astype(int).clip(0, num_cols - 1)] = 1.0
 

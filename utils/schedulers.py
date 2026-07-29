@@ -68,7 +68,7 @@ class _WarmupScheduler(_BaseLRScheduler):
             else [lr / 100.0 for lr in self.base_lrs]
         )
         alpha = self.last_epoch / max(1, self.warmup)
-        return [start + (base - start) * alpha for start, base in zip(starts, self.base_lrs)]
+        return [start + (base - start) * alpha for start, base in zip(starts, self.base_lrs, strict=True)]
 
     def _progress(self) -> float:
         """Fraction of the post-warmup schedule completed, clamped to [0, 1]."""
