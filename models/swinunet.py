@@ -278,12 +278,21 @@ class SwinBlock(nn.Module):
         )
         self.drop_path = DropPath(drop_path_rate) if drop_path_rate > 0 else nn.Identity()
 
-        # Attention masks depend only on the padded resolution, so they are
-        # cached rather than recomputed every forward pass.
-        self._mask_cache: dict[tuple[int, int, int], torch.Tensor] = {}
+        # Attention masks depend only on the padded resolution, the effective
+        # shift, and the target device/dtype, so they are cached rather than
+        # rebuilt on every forward pass. Not registered as buffers: they are
+        # derived, and persisting them would bloat every checkpoint.
+        self._mask_cache: dict[tuple, torch.Tensor] = {}
 
     def _build_attn_mask(
-        self, Hp: int, Wp: int, pad_h: int, pad_w: int, device: torch.device
+        self,
+        Hp: int,
+        Wp: int,
+        pad_h: int,
+        pad_w: int,
+        shift: int,
+        device: torch.device,
+        dtype: torch.dtype,
     ) -> torch.Tensor | None:
         """
         Build the additive attention mask for a padded ``(Hp, Wp)`` feature map.
@@ -298,22 +307,24 @@ class SwinBlock(nn.Module):
 
         Both are expressed by painting a region id per pixel and blocking any
         pair whose ids differ.
+
+        ``shift`` is a parameter rather than read from ``self`` because the
+        effective shift depends on the incoming resolution: a feature map only
+        one window wide cannot be usefully shifted. Passing it keeps this
+        function pure, so concurrent forward passes at different resolutions
+        cannot interfere.
         """
-        if self.shift_size == 0 and pad_h == 0 and pad_w == 0:
+        if shift == 0 and pad_h == 0 and pad_w == 0:
             return None
 
-        key = (Hp, Wp, self.shift_size)
+        key = (Hp, Wp, shift, device, dtype)
         cached = self._mask_cache.get(key)
         if cached is not None:
-            return cached.to(device)
+            return cached
 
         img_mask = torch.zeros(1, Hp, Wp, 1)
-        if self.shift_size > 0:
-            slices = (
-                slice(0, -self.ws),
-                slice(-self.ws, -self.shift_size),
-                slice(-self.shift_size, None),
-            )
+        if shift > 0:
+            slices = (slice(0, -self.ws), slice(-self.ws, -shift), slice(-shift, None))
             region = 0
             for hs in slices:
                 for wsl in slices:
@@ -331,15 +342,18 @@ class SwinBlock(nn.Module):
 
         mask_windows = window_partition(img_mask, self.ws).view(-1, self.ws * self.ws)
         attn_mask = mask_windows.unsqueeze(1) - mask_windows.unsqueeze(2)
-        # -100 rather than -inf: softmax(-inf) over an all-masked row yields NaN,
-        # which can happen for a fully padded window. -100 makes those rows
-        # uniform-but-harmless instead of poisoning the graph with NaNs.
+        # -100 rather than -inf: softmax over an all -inf row yields NaN, which
+        # a fully padded window would produce. -100 makes such rows uniform and
+        # harmless instead of poisoning the graph.
         attn_mask = attn_mask.masked_fill(attn_mask != 0, -100.0).masked_fill(
             attn_mask == 0, 0.0
         )
 
+        # Cache on the target device and dtype so the forward pass does not pay
+        # a host-to-device copy on every call.
+        attn_mask = attn_mask.to(device=device, dtype=dtype)
         self._mask_cache[key] = attn_mask
-        return attn_mask.to(device)
+        return attn_mask
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """``x`` : ``(B, H, W, C)`` -> ``(B, H, W, C)``."""
@@ -356,9 +370,7 @@ class SwinBlock(nn.Module):
         if shift > 0:
             x = torch.roll(x, shifts=(-shift, -shift), dims=(1, 2))
 
-        saved_shift, self.shift_size = self.shift_size, shift
-        attn_mask = self._build_attn_mask(Hp, Wp, pad_h, pad_w, x.device)
-        self.shift_size = saved_shift
+        attn_mask = self._build_attn_mask(Hp, Wp, pad_h, pad_w, shift, x.device, x.dtype)
 
         x_windows = window_partition(x, self.ws).view(-1, self.ws * self.ws, C)
         attn_out = self.attn(x_windows, mask=attn_mask).view(-1, self.ws, self.ws, C)

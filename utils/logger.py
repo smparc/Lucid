@@ -236,9 +236,18 @@ class ExperimentLogger:
         if self.tb_writer:
             import numpy as np
 
-            stacked = np.concatenate(
-                [(a - a.min()) / (a.ptp() + 1e-8) for a in prepared], axis=1
-            )
+            # np.ptp(a), not a.ptp(): the ndarray method was removed in NumPy 2.0.
+            normalised = [(a - a.min()) / (np.ptp(a) + 1e-8) for a in prepared]
+            # Panels can differ in height (e.g. a magnitude view beside an error
+            # map); pad to the tallest before concatenating along width.
+            height = max(a.shape[0] for a in normalised)
+            padded = [
+                np.pad(a, ((0, height - a.shape[0]), (0, 0)), constant_values=0)
+                if a.shape[0] < height
+                else a
+                for a in normalised
+            ]
+            stacked = np.concatenate(padded, axis=1).astype(np.float32)
             self.tb_writer.add_image(
                 tag, torch.from_numpy(stacked).unsqueeze(0), global_step=step
             )

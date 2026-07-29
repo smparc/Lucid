@@ -19,7 +19,7 @@ Exit codes
 ----------
 Every command returns 0 on success and non-zero on failure. This matters: the
 original ``test_models`` caught every exception, printed ``FAIL`` into a table,
-and returned successfully — so the CI "model sanity" job passed green while the
+and returned successfully, so the CI "model sanity" job passed green while the
 flagship architecture could not even be constructed.
 """
 

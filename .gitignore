@@ -1,51 +1,52 @@
+# -- Python -------------------------------------------------------------------
 __pycache__/
-*.pyc
-*.pyo
-.env
-.venv/
-venv/
+*.py[cod]
 *.egg-info/
 dist/
 build/
+.env
+.venv/
+venv/
 .DS_Store
 
-
-# fastMRI data (download separately — see data/README.md)
+# -- Data ---------------------------------------------------------------------
+# fastMRI must be downloaded separately; see data/README.md.
 data/knee_singlecoil_train/
 data/knee_singlecoil_val/
+data/synthetic/
 data/*.h5
 
-
-# Model checkpoints (large files)
+# -- Checkpoints and exports --------------------------------------------------
 checkpoints/
+exports/
 *.pt
 *.pth
-
-
-# Outputs & experiment logs
-outputs/
-results/
-exports/
-*.png
 *.onnx
 
-
-# Experiment tracking
+# -- Run outputs --------------------------------------------------------------
+outputs/
+results/
 wandb/
 runs/
 
-
-# Jupyter checkpoints
+# -- Notebooks ----------------------------------------------------------------
 .ipynb_checkpoints/
 notebooks/.ipynb_checkpoints/
 
+# -- Paper build artifacts ----------------------------------------------------
+# paper.pdf and results_ablation.tex are committed on purpose: the paper should
+# build, and its numbers should be inspectable, without rerunning the experiments.
+paper/*.aux
+paper/*.log
+paper/*.out
+paper/*.toc
+paper/build*.log
 
-# IDE
+# -- Tooling ------------------------------------------------------------------
 .vscode/
 .idea/
-
-
-# Coverage
+.pytest_cache/
+.ruff_cache/
 htmlcov/
 .coverage
 coverage.xml

@@ -280,6 +280,23 @@ class TestStatistics:
         assert adjusted["a"]["p_adjusted"] <= adjusted["b"]["p_adjusted"]
         assert adjusted["c"]["p_adjusted"] >= 0.04
 
+    def test_comparison_table_is_ascii_encodable(self):
+        """
+        Windows consoles default to cp1252. A table containing U+0394 or U+2014
+        raises UnicodeEncodeError on print, turning a completed evaluation into
+        a crash at the final step.
+        """
+        rng = np.random.default_rng(0)
+        base = rng.normal(28.0, 2.0, 60)
+        comparison = compare_models(
+            {"a": {"psnr": base.tolist()}, "b": {"psnr": (base + 1).tolist()}},
+            metric="psnr",
+            reference="a",
+        )
+        table = format_comparison_table(comparison)
+        table.encode("cp1252")  # raises if any character is unencodable
+        assert table.isascii()
+
     def test_compare_models_end_to_end(self):
         rng = np.random.default_rng(0)
         base = rng.normal(28.0, 2.0, 150)
@@ -386,6 +403,52 @@ class TestEMA:
     def test_rejects_invalid_decay(self):
         with pytest.raises(ValueError, match="decay"):
             EMAModel(self._model(), decay=1.5)
+
+    def test_shadow_matches_the_documented_recursion(self):
+        """
+        The shadow must equal the closed-form EMA with the documented warmup
+        ramp. An off-by-one in the decay schedule is invisible in any loss
+        curve but changes which weights are actually evaluated.
+        """
+        torch.manual_seed(0)
+        model = torch.nn.Linear(3, 3, bias=False)
+        ema = EMAModel(model, decay=0.9, warmup=0, include_buffers=False)
+
+        expected = model.weight.detach().clone()
+        for step in range(1, 21):
+            with torch.no_grad():
+                model.weight.add_(0.1)
+            ema.update()
+            decay = min(0.9, (1 + step) / (10 + step))
+            expected = decay * expected + (1 - decay) * model.weight.detach()
+
+        assert torch.allclose(ema.shadow["weight"], expected, atol=1e-6)
+
+
+class TestGradientAccumulation:
+    """Accumulating k micro-batches must equal one batch k times larger."""
+
+    @staticmethod
+    def _accumulated_grads(accum: int) -> torch.Tensor:
+        torch.manual_seed(0)
+        model = torch.nn.Sequential(
+            torch.nn.Linear(8, 8), torch.nn.Tanh(), torch.nn.Linear(8, 1)
+        )
+        x = torch.arange(32.0).reshape(4, 8) / 32
+        y = torch.zeros(4, 1)
+
+        model.zero_grad()
+        micro = 4 // accum
+        for i in range(accum):
+            xb, yb = x[i * micro : (i + 1) * micro], y[i * micro : (i + 1) * micro]
+            # This is exactly the trainer's scaling: loss / accum, accumulated.
+            (((model(xb) - yb) ** 2).mean() / accum).backward()
+        return torch.cat([p.grad.flatten() for p in model.parameters()])
+
+    @pytest.mark.parametrize("accum", [2, 4])
+    def test_equivalent_to_a_single_large_batch(self, accum):
+        reference = self._accumulated_grads(1)
+        assert torch.allclose(self._accumulated_grads(accum), reference, atol=1e-6)
 
 
 # ---------------------------------------------------------------------------
@@ -649,6 +712,35 @@ class TestTrainerIntegration:
             synthetic_data_dir, tmp_path, training={"gradient_accumulation": 2, "epochs": 1}
         )
         assert math.isfinite(Trainer(cfg).fit()["best_val_loss"])
+
+    def test_validation_images_are_actually_written(self, synthetic_data_dir, tmp_path):
+        """
+        Image logging is wrapped in a try/except so a plotting failure cannot
+        kill a run — which means a broken call would otherwise be invisible.
+        (It was: `ndarray.ptp()` was removed in NumPy 2.0 and the panels
+        silently stopped being written.)
+        """
+        pytest.importorskip("tensorboard")
+        from tensorboard.backend.event_processing.event_accumulator import (
+            EventAccumulator,
+        )
+
+        from training.train import Trainer
+
+        cfg = self._config(synthetic_data_dir, tmp_path, training={"epochs": 1})
+        cfg["logging"]["tensorboard"] = True
+        cfg["logging"]["log_images"] = True
+
+        trainer = Trainer(cfg)
+        trainer.fit()
+        assert not getattr(trainer, "_image_log_warned", False), "image logging errored"
+
+        events = list((tmp_path / "test" / "tensorboard").glob("events.out.tfevents.*"))
+        assert events, "no TensorBoard event file written"
+
+        acc = EventAccumulator(str(events[0]), size_guidance={"images": 10})
+        acc.Reload()
+        assert "val/reconstruction" in acc.Tags()["images"]
 
     def test_monitoring_a_maximised_metric(self, synthetic_data_dir, tmp_path):
         from training.train import Trainer

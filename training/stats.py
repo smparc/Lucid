@@ -251,7 +251,14 @@ def compare_models(
 
 
 def format_comparison_table(comparison: dict, precision: int = 4) -> str:
-    """Render :func:`compare_models` output as a plain-text table."""
+    """
+    Render :func:`compare_models` output as a plain-text table.
+
+    Deliberately ASCII-only. Windows consoles default to cp1252, which cannot
+    encode characters such as U+0394 or U+2014, so a table containing them
+    raises ``UnicodeEncodeError`` the moment it is printed -- turning a
+    successful evaluation into a crash at the very last step.
+    """
     if not comparison:
         return "(no results)"
 
@@ -259,21 +266,21 @@ def format_comparison_table(comparison: dict, precision: int = 4) -> str:
     reference = comparison["reference"]
     lines = [
         f"Metric: {metric}   Reference: {reference}",
-        f"{'Model':<22}{'Mean':>10}{'95% CI':>24}{'Δ vs ref':>12}{'p (Holm)':>11}",
-        "-" * 79,
+        f"{'Model':<22}{'Mean':>10}{'95% CI':>24}{'Diff vs ref':>14}{'p (Holm)':>11}",
+        "-" * 81,
     ]
 
     for name, iv in comparison["intervals"].items():
         ci = f"[{iv['ci_low']:.{precision}f}, {iv['ci_high']:.{precision}f}]"
         if name == reference:
-            delta, pval = "—", "—"
+            delta, pval = "--", "--"
         else:
             comp = comparison["comparisons"][name]
             delta = f"{comp['mean_diff']:+.{precision}f}"
             p = comp.get("p_adjusted", comp["p_value"])
             pval = f"{p:.4f}" + ("*" if comp.get("significant") else "")
         lines.append(
-            f"{name:<22}{iv['mean']:>10.{precision}f}{ci:>24}{delta:>12}{pval:>11}"
+            f"{name:<22}{iv['mean']:>10.{precision}f}{ci:>24}{delta:>14}{pval:>11}"
         )
 
     lines.append("")

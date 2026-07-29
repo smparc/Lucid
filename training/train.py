@@ -124,6 +124,20 @@ class Trainer:
             self.expects_kspace,
         )
 
+        if cfg.training.get("compile", False):
+            # EMA and checkpointing both walk named_parameters(), and compiling
+            # in place would prefix every name with `_orig_mod.`. Keeping the
+            # compiled callable separate leaves `self.model` as the source of
+            # truth for state, so checkpoints stay loadable without compilation.
+            try:
+                self._compiled = torch.compile(self.model)
+                log.info("torch.compile enabled")
+            except Exception as exc:
+                log.warning("torch.compile failed (%s); running eagerly", exc)
+                self._compiled = self.model
+        else:
+            self._compiled = self.model
+
         # ── Loss ───────────────────────────────────────────────────────────
         loss_cfg = dict(cfg.training.get("loss", {}) or {})
         self.criterion = CombinedLoss(**loss_cfg).to(self.device)
@@ -355,9 +369,10 @@ class Trainer:
         x = batch["image"]
         if self.cfg.training.get("channels_last", False):
             x = x.contiguous(memory_format=torch.channels_last)
+        model = self._compiled
         if self.expects_kspace:
-            return forward_model(self.model, x, batch["kspace"], batch["mask"])
-        return forward_model(self.model, x)
+            return model(x, batch["kspace"], batch["mask"])
+        return forward_model(model, x)
 
     def _autocast(self):
         if not self.use_amp:
@@ -456,7 +471,7 @@ class Trainer:
         return result
 
     @torch.no_grad()
-    def validate(self, loader: DataLoader) -> dict[str, float]:
+    def validate(self, loader: DataLoader, epoch: int | None = None) -> dict[str, float]:
         """
         Evaluate on the validation set, under EMA weights when enabled.
 
@@ -465,10 +480,11 @@ class Trainer:
         """
         self.model.eval()
         acc = MetricAccumulator()
+        log_images = bool(self.cfg.logging.get("log_images", True)) and epoch is not None
 
         context = self.ema.average_parameters() if self.ema is not None else nullcontext()
         with context:
-            for batch in loader:
+            for i, batch in enumerate(loader):
                 batch = self._to_device(batch)
 
                 with self._autocast():
@@ -488,6 +504,13 @@ class Trainer:
                     accelerations=batch.get("acceleration"),
                 )
 
+                # One panel per epoch from the first batch. Watching the error
+                # map evolve catches failure modes that a scalar cannot: a model
+                # that sharpens edges while drifting in overall intensity can
+                # improve SSIM and look worse to a reader.
+                if log_images and i == 0:
+                    self._log_validation_images(batch, pred, target, epoch)
+
         summary = acc.compute()
         result = {
             "val_loss": summary.get("loss", float("nan")),
@@ -500,6 +523,33 @@ class Trainer:
 
         self._last_accumulator = acc
         return result
+
+    def _log_validation_images(
+        self, batch: dict, pred: torch.Tensor, target: torch.Tensor, epoch: int
+    ) -> None:
+        """Log input / prediction / target / error for the first validation sample."""
+        try:
+            image = batch["image"][0].detach().cpu()
+            # A complex input has no single displayable channel; show magnitude.
+            inp = torch.sqrt((image**2).sum(0, keepdim=True)) if image.shape[0] == 2 else image
+
+            tgt = target[0].detach().cpu()
+            out = pred[0].detach().cpu()
+            scale = float(tgt.max()) or 1.0
+            error = (out - tgt).abs() / scale * 4  # amplify; errors are small
+
+            self.logger.log_images_grid(
+                "val/reconstruction",
+                [inp / scale, out / scale, tgt / scale, error.clamp(0, 1)],
+                step=self.global_step,
+                captions=["input", "prediction", "target", "|error| x4"],
+            )
+        except Exception as exc:
+            # Warn once rather than log at debug: a silently swallowed error
+            # here is how the image panels quietly stopped being written at all.
+            if not getattr(self, "_image_log_warned", False):
+                log.warning("Validation image logging failed (%s); disabling it", exc)
+                self._image_log_warned = True
 
     # ------------------------------------------------------------------
     # Fit
@@ -573,7 +623,7 @@ class Trainer:
             final_epoch = epoch
 
             train_metrics = self.train_one_epoch(train_loader, epoch)
-            val_metrics = self.validate(val_loader)
+            val_metrics = self.validate(val_loader, epoch=epoch)
             elapsed = time.time() - t0
 
             if isinstance(self.scheduler, ReduceLROnPlateau):
