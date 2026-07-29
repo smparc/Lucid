@@ -1,0 +1,69 @@
+# =============================================================================
+# SwinUNet + unrolled data consistency  --  the strongest configuration.
+#
+# Four cascade stages, each a SwinUNet denoiser followed by a data-consistency
+# step that writes the measured k-space coefficients back into the estimate.
+# The network can therefore only ever modify frequencies that were never
+# acquired, which is both the physically correct constraint and the single
+# largest quality gain available on this task.
+#
+# Because each stage carries its own denoiser, the per-stage width is reduced
+# (embed_dim 48, n_levels 3) to keep total parameters comparable to the
+# single-pass SwinUNet. The comparison is therefore about *where* capacity is
+# spent, not how much.
+#
+# Requirements:
+#   - complex I/O (writing k-space back requires phase)
+#   - undersample_domain: cropped (so measurements and model share one space)
+# Both are enforced by config validation.
+# =============================================================================
+
+model:
+  name: swinunet
+  complex: true
+  params:
+    img_size: 320
+    patch_size: 4
+    embed_dim: 48
+    ws: 8
+    head_dim: 8
+    n_levels: 3
+    depths: [2, 2, 2, 2]
+    drop_path_rate: 0.1
+    dropout: 0.0
+    residual: true
+  data_consistency:
+    enabled: true
+    mode: cascade
+    n_cascades: 4
+    share_weights: false
+    hard: false          # learnable lambda; initialised at ~1.0 (hard DC)
+
+data:
+  undersample_domain: cropped
+  acceleration: [4, 8]   # one model that handles both acceleration factors
+  mask_type: random
+
+training:
+  epochs: 50
+  batch_size: 2
+  gradient_accumulation: 3   # effective batch 6, matching the baselines
+  lr: 4.0e-5
+  weight_decay: 1.0e-4
+  optimizer: adamw
+  scheduler: warmup_cosine
+  warmup_epochs: 5
+  amp: true
+  augmentation: true
+  patience: 12
+  monitor: val_ssim
+  monitor_mode: max
+  loss:
+    l1_weight: 0.7
+    ssim_weight: 0.3
+    freq_weight: 0.05    # small k-space term; the DC layer handles the rest
+
+logging:
+  experiment_name: swinunet_dc
+  tensorboard: true
+  wandb: false

@@ -1,99 +1,103 @@
-# ─────────────────────────────────────────────────────────────────────────────
-# Default configuration for Accelerated MRI Reconstruction
-# Override any field via CLI: python main.py train --config configs/swinunet.yaml
-# ─────────────────────────────────────────────────────────────────────────────
+# =============================================================================
+# Default configuration for Lucid: accelerated MRI reconstruction.
+#
+# Experiment configs in this directory override these values; CLI arguments
+# override those in turn:
+#   python main.py train --config configs/swinunet.yaml training.lr=5e-5
+#
+# Every key here is validated on load (see config.py). Unknown keys are an
+# error, not a silent no-op.
+# =============================================================================
 
-
-# ── Model ────────────────────────────────────────────────────────────────────
+# -- Model --------------------------------------------------------------------
 model:
-  name: swinunet            # unet | bt_unet | swinunet
+  name: swinunet             # unet | norm_unet | bt_unet | swinunet
+  complex: false             # 2-channel (real, imag) I/O; forced true when DC is on
   params:
     img_size: 320
     patch_size: 4
-    in_ch: 1
-    out_ch: 1
     embed_dim: 64
-    ws: 8
+    ws: 8                    # window size; any value works, feature maps are padded
     head_dim: 8
-    dropout: 0.1
     n_levels: 3
+    mlp_ratio: 4.0
+    dropout: 0.0
+    attn_dropout: 0.0
+    drop_path_rate: 0.1      # stochastic depth, ramped linearly across blocks
+    residual: true           # predict a correction to the zero-filled input
   data_consistency:
-    enabled: false           # Wrap model with ResidualDCWrapper
-    use_dc: true             # Apply k-space data consistency (requires k-space input)
+    enabled: false           # requires data.undersample_domain = cropped
+    mode: cascade            # cascade (unrolled) | single
+    n_cascades: 4
+    share_weights: false
+    hard: false              # true = overwrite measured lines exactly
 
-
-# ── Data ─────────────────────────────────────────────────────────────────────
+# -- Data ---------------------------------------------------------------------
 data:
   train_dir: data/knee_singlecoil_train
   val_dir: data/knee_singlecoil_val
-  center_fraction: 0.08
-  acceleration: 4
+  center_fraction: 0.08      # fraction of low-frequency lines always acquired
+  acceleration: 4            # int, or a list like [4, 8] to train across factors
   crop_size: [320, 320]
+  mask_type: random          # random | equispaced | magic
+  slice_mode: middle         # middle | all | range:start:end
+  normalization: zf_max      # zf_max | attr_max | none
+  undersample_domain: cropped  # cropped (exact data consistency) | full (legacy)
   num_workers: 4
   pin_memory: true
-  cache_dataset: false       # Cache processed slices in memory (faster, more RAM)
+  persistent_workers: true
+  prefetch_factor: 2
+  cache_dataset: false
+  max_files: null            # limit volumes, for smoke tests
 
-
-# ── Training ─────────────────────────────────────────────────────────────────
+# -- Training -----------------------------------------------------------------
 training:
   epochs: 50
   batch_size: 4
   seed: 42
-  val_split: 0.1             # Used only if val_dir is not provided separately
+  deterministic: false       # true is bit-reproducible but 5-20% slower
+  val_split: 0.1             # used only when val_dir is missing
 
-
-  # Optimizer
-  optimizer: adam             # adam | adamw
+  optimizer: adamw           # adam | adamw | sgd
   lr: 8.0e-5
-  weight_decay: 1.0e-4
+  weight_decay: 1.0e-4       # never applied to norms, biases or position biases
   betas: [0.9, 0.999]
 
+  scheduler: warmup_cosine   # warmup_cosine | warmup_linear | warmup_restart
+                             # | cosine | step | plateau | none
+  warmup_epochs: 5           # converted to steps internally
+  eta_min_factor: 0.01
 
-  # Scheduler
-  scheduler: warmup_cosine   # warmup_cosine | cosine | step | plateau
-  warmup_epochs: 5           # Linear warmup epochs (critical for transformers)
-  eta_min_factor: 0.01       # min_lr = lr * eta_min_factor
-
-
-  # Loss
   loss:
     l1_weight: 0.7
     ssim_weight: 0.3
-    freq_weight: 0.0          # Frequency domain loss (set >0 to enable)
-    edge_weight: 0.0          # Sobel edge loss
-    perceptual_weight: 0.0    # VGG perceptual loss
-    charbonnier: false         # Use Charbonnier instead of L1
+    freq_weight: 0.0         # k-space error; helps recover high frequencies
+    edge_weight: 0.0         # Sobel boundary loss
+    perceptual_weight: 0.0   # VGG features; downloads weights when > 0
+    charbonnier: false
 
-
-  # Regularization
   gradient_clip: 1.0
-  augmentation: true
-
-
-  # Early stopping
+  augmentation: true         # applied to the complex image before undersampling
   patience: 10
 
+  amp: true
+  amp_dtype: auto            # auto | float16 | bfloat16
 
-  # Mixed precision
-  amp: true                  # Automatic Mixed Precision (FP16)
-
-
-  # EMA (Exponential Moving Average)
   ema:
     enabled: true
     decay: 0.999
     warmup_steps: 1000
+    include_buffers: true
 
-
-  # Gradient accumulation (effective_batch = batch_size * gradient_accumulation)
   gradient_accumulation: 1
+  compile: false
+  channels_last: false
 
+  monitor: val_loss          # metric driving early stopping and best.pt
+  monitor_mode: min          # min | max  (use max with val_psnr / val_ssim)
+  max_steps_per_epoch: null  # cap batches per epoch, for smoke tests
 
-  # Distributed
-  distributed: false         # Enable DDP multi-GPU training
-
-
-# ── Logging ──────────────────────────────────────────────────────────────────
+# -- Logging ------------------------------------------------------------------
 logging:
   output_dir: outputs
   experiment_name: swinunet_default
@@ -101,12 +105,15 @@ logging:
   wandb: false
   wandb_project: lucid-mri
   wandb_entity: null
-  log_interval: 10           # Log every N batches
-  save_top_k: 3             # Keep top-K checkpoints by val_loss
+  log_interval: 25           # optimiser steps between batch-level logs
+  save_top_k: 3              # retained by monitored metric, not by mtime
+  log_images: true
+  unique_run_dir: true       # timestamp new runs instead of overwriting
 
-
-# ── Inference ────────────────────────────────────────────────────────────────
+# -- Inference ----------------------------------------------------------------
 inference:
-  checkpoint: null           # Path to .pt checkpoint
+  checkpoint: null
   export_onnx: false
   onnx_path: exports/model.onnx
+  tta: false
+  mc_dropout_samples: 0

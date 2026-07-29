@@ -1,26 +1,35 @@
-# ─────────────────────────────────────────────────────────────────────────────
-# U-Net Baseline config
-# ─────────────────────────────────────────────────────────────────────────────
-
+# =============================================================================
+# U-Net baseline.
+#
+# Kept deliberately close to the original: 4 levels, base width 32,
+# InstanceNorm + LeakyReLU. The one substantive change is the global residual
+# connection, which every model in this project now uses so the architectural
+# comparison isolates the backbone rather than the output parameterisation.
+# =============================================================================
 
 model:
   name: unet
+  complex: false
   params:
-    in_channels: 1
-    out_channels: 1
     base_ch: 32
     n_levels: 4
-
+    norm: instance
+    dropout: 0.0
+    residual: true
 
 training:
   epochs: 60
   batch_size: 8
   lr: 1.0e-4
   weight_decay: 1.0e-4
+  optimizer: adamw
+  scheduler: warmup_cosine
+  warmup_epochs: 3
   amp: true
   augmentation: true
   patience: 15
-
+  monitor: val_ssim
+  monitor_mode: max
 
 logging:
   experiment_name: unet_baseline

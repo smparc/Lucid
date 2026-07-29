@@ -1,33 +1,44 @@
-# ─────────────────────────────────────────────────────────────────────────────
-# SwinUNet optimized config (best performing — 33.10 dB PSNR)
-# ─────────────────────────────────────────────────────────────────────────────
-
+# =============================================================================
+# SwinUNet, image-domain only (no data consistency).
+#
+# This is the direct successor to the original "best model" configuration. It is
+# the fair comparison point for the U-Net and BT-UNet baselines, since all three
+# are then purely image-domain networks trained on identical data.
+#
+# For the strongest model, use configs/swinunet_dc.yaml, which adds the unrolled
+# data-consistency cascade.
+# =============================================================================
 
 model:
   name: swinunet
+  complex: false
   params:
     img_size: 320
     patch_size: 4
-    in_ch: 1
-    out_ch: 1
     embed_dim: 64
     ws: 8
     head_dim: 8
-    dropout: 0.1
     n_levels: 3
-
+    depths: [2, 2, 2, 2]
+    drop_path_rate: 0.1
+    dropout: 0.0
+    residual: true
 
 training:
   epochs: 50
   batch_size: 6
   lr: 5.0e-5
   weight_decay: 1.0e-4
+  optimizer: adamw
+  scheduler: warmup_cosine
+  warmup_epochs: 5
   amp: true
   augmentation: true
   patience: 12
-
+  monitor: val_ssim
+  monitor_mode: max
 
 logging:
-  experiment_name: swinunet_optimized
+  experiment_name: swinunet
   tensorboard: true
-  wandb: true
+  wandb: false
