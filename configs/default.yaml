@@ -13,18 +13,22 @@
 model:
   name: swinunet             # unet | norm_unet | bt_unet | swinunet
   complex: false             # 2-channel (real, imag) I/O; forced true when DC is on
-  params:
-    img_size: 320
-    patch_size: 4
-    embed_dim: 64
-    ws: 8                    # window size; any value works, feature maps are padded
-    head_dim: 8
-    n_levels: 3
-    mlp_ratio: 4.0
-    dropout: 0.0
-    attn_dropout: 0.0
-    drop_path_rate: 0.1      # stochastic depth, ramped linearly across blocks
-    residual: true           # predict a correction to the zero-filled input
+
+  # Architecture hyperparameters. Left empty on purpose: per-model defaults live
+  # in models/registry.py, which is the only place that knows which arguments a
+  # given backbone accepts. Putting SwinUNet's parameters here would leak them
+  # into `model.name=unet` runs, where strict validation would then (correctly)
+  # reject `embed_dim` as unknown.
+  #
+  # SwinUNet accepts: img_size, patch_size, embed_dim, ws, head_dim, n_levels,
+  #   depths, n_heads, mlp_ratio, dropout, attn_dropout, drop_path_rate,
+  #   residual, use_checkpoint, use_sdpa
+  # UNet / NormUNet accepts: base_ch, n_levels, norm, dropout, residual,
+  #   residual_blocks
+  # BT-UNet accepts: base_ch, n_levels, tf_heads, tf_layers, tf_dropout,
+  #   img_size, norm, residual
+  params: {}
+
   data_consistency:
     enabled: false           # requires data.undersample_domain = cropped
     mode: cascade            # cascade (unrolled) | single
