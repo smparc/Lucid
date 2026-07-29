@@ -59,7 +59,7 @@ from config import load_config  # noqa: E402
 from data.preprocessing import FastMRIKneeDataset, collate  # noqa: E402
 from models.registry import build_model, forward_model  # noqa: E402
 from training.losses import CombinedLoss, SSIMLoss  # noqa: E402
-from training.metrics import MetricAccumulator, nmse, psnr, ssim  # noqa: E402
+from training.metrics import MetricAccumulator, psnr, ssim  # noqa: E402
 from utils.ema import EMAModel  # noqa: E402
 from utils.logger import ExperimentLogger  # noqa: E402
 from utils.reproducibility import make_generator, seed_everything, seed_worker  # noqa: E402
@@ -535,6 +535,9 @@ class Trainer:
                 total_steps,
                 warmup,
             )
+            # A resumed run stashed its scheduler state before the scheduler
+            # existed; apply it now that it does.
+            self._restore_scheduler()
 
         if self.start_epoch > epochs:
             log.warning(
