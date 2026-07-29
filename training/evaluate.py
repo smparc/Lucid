@@ -1,97 +1,124 @@
 """
 evaluate.py
 -----------
-Evaluation and visualization for trained MRI reconstruction models.
-
+Evaluation, visualisation and statistically grounded architecture comparison.
 
 Metrics
 -------
-- PSNR  (Peak Signal-to-Noise Ratio)     — pixel-wise accuracy
-- SSIM  (Structural Similarity Index)    — structural fidelity
-- Val Loss                               — combined L1 + SSIM loss
+PSNR, SSIM and NMSE, all computed per image against each target's own dynamic
+range (see :mod:`training.metrics` for why that matters), plus the combined
+validation loss.
 
-
-Outputs
--------
-- Per-sample PSNR / SSIM printed to stdout
-- Visual grid: [Input | Prediction | Ground Truth] saved to file
-- Architecture comparison summary table
+Beyond point estimates
+----------------------
+:func:`compare_architectures` reports bootstrap confidence intervals and paired
+permutation tests rather than bare means. On ~199 validation slices the
+per-slice PSNR spread is several dB, so a difference of a few tenths between two
+architectures is not distinguishable from noise — and saying so is a stronger
+result than quietly reporting the larger number.
 """
 
+from __future__ import annotations
 
+import argparse
+import json
+import logging
 import os
 import sys
-import json
-import argparse
+from pathlib import Path
+from typing import Any
 
-
-import torch
-import torch.nn.functional as F
-from torch.utils.data import DataLoader, random_split
 import matplotlib
+
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-import numpy as np
+import matplotlib.pyplot as plt  # noqa: E402
+import numpy as np  # noqa: E402
+import torch  # noqa: E402
+from torch.utils.data import DataLoader  # noqa: E402
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from models.unet import UNet
-from models.bt_unet import BTUNet
-from models.swinunet import SwinUNet
-from training.train import build_model, psnr as compute_psnr, ssim_metric
-from data.preprocessing import FastMRIKneeDataset
+from config import Config, load_config  # noqa: E402
+from data.preprocessing import FastMRIKneeDataset, collate  # noqa: E402
+from models.registry import build_model, forward_model  # noqa: E402
+from training.losses import CombinedLoss  # noqa: E402
+from training.metrics import MetricAccumulator  # noqa: E402
+from training.stats import compare_models, format_comparison_table  # noqa: E402
+from utils.ema import load_ema_weights_into  # noqa: E402
 
+log = logging.getLogger(__name__)
+
+__all__ = [
+    "compare_architectures",
+    "evaluate_model",
+    "load_model",
+    "plot_training_history",
+    "visualize_reconstructions",
+]
 
 
 # ---------------------------------------------------------------------------
-# Load model from checkpoint
+# Checkpoint loading
 # ---------------------------------------------------------------------------
 
 
-def load_model(model_name: str, ckpt_path: str, device: torch.device) -> torch.nn.Module:
-    ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
+def load_model(
+    model_name: str | None,
+    ckpt_path: str | Path,
+    device: torch.device,
+    use_ema: bool = True,
+) -> torch.nn.Module:
+    """
+    Rebuild a model from a checkpoint.
 
+    The architecture is reconstructed from the config stored inside the
+    checkpoint whenever one is present, so the weights can never be loaded into
+    a differently shaped model. ``model_name`` is only a fallback for legacy
+    checkpoints that predate config embedding.
 
-    # Use config from checkpoint if available (avoids param mismatch)
-    config = ckpt.get("config", {})
+    Parameters
+    ----------
+    use_ema
+        Prefer the EMA (averaged) weights. These are what the trainer validated
+        against and what ``best.pt`` was selected on, so evaluating the raw
+        weights instead would report a different — usually worse — model than
+        the one the run claims to have produced.
+    """
+    path = Path(ckpt_path)
+    if not path.exists():
+        raise FileNotFoundError(f"Checkpoint not found: {path}")
+
+    ckpt = torch.load(path, map_location=device, weights_only=False)
+    config = ckpt.get("config") or {}
+
     if config and "model" in config:
-        from config import Config
-        cfg = Config(config)
-        model = build_model(cfg)
+        cfg = config if isinstance(config, Config) else Config(config)
     else:
-        # Fallback: build from model_name with defaults
-        name = model_name.lower()
-        if name == "unet":
-            model = UNet(in_channels=1, out_channels=1, base_ch=32, n_levels=4)
-        elif name == "bt_unet":
-            model = BTUNet(in_channels=1, out_channels=1, base_ch=32, n_levels=4)
-        elif name == "swinunet":
-            model = SwinUNet(img_size=320, patch_size=4, in_ch=1, out_ch=1,
-                             embed_dim=64, ws=8, head_dim=8, dropout=0.0, n_levels=3)
-        else:
-            raise ValueError(f"Unknown model: {model_name}")
+        if not model_name:
+            raise ValueError(
+                f"{path} has no embedded config; pass --model to specify the architecture."
+            )
+        log.warning("Checkpoint has no embedded config; building %r from defaults", model_name)
+        cfg = load_config(overrides={"model": {"name": model_name}}, validate=False)
 
+    model = build_model(cfg)
+    model.load_state_dict(ckpt["model_state"])
 
-    # Prefer EMA weights for evaluation
-    if ckpt.get("ema_state") is not None:
-        ema_state = ckpt["ema_state"]
-        shadow_params = ema_state.get("shadow_params")
-        if shadow_params is not None:
-            for param, shadow in zip(model.parameters(), shadow_params):
-                param.data.copy_(shadow)
-            print(f"  Loaded EMA weights from {ckpt_path}")
-        else:
-            model.load_state_dict(ckpt["model_state"])
-    else:
-        model.load_state_dict(ckpt["model_state"])
-
+    applied_ema = False
+    if use_ema:
+        applied_ema = load_ema_weights_into(model, ckpt.get("ema_state"))
 
     model.to(device).eval()
-    print(f"  Loaded {model_name} from {ckpt_path}  (epoch {ckpt.get('epoch', '?')}, "
-          f"val_loss={ckpt.get('val_loss', 0):.4f}, PSNR={ckpt.get('val_psnr', 0):.2f}dB)")
-    return model
-    return model
 
+    log.info(
+        "Loaded %s from %s (epoch %s, val_psnr=%s, weights=%s)",
+        cfg.model.get("name", model_name),
+        path,
+        ckpt.get("epoch", "?"),
+        f"{ckpt.get('val_psnr', float('nan')):.2f}" if ckpt.get("val_psnr") else "?",
+        "EMA" if applied_ema else "raw",
+    )
+    return model
 
 
 # ---------------------------------------------------------------------------
@@ -100,183 +127,357 @@ def load_model(model_name: str, ckpt_path: str, device: torch.device) -> torch.n
 
 
 @torch.no_grad()
-def evaluate_model(model, loader, device, n_samples: int = None):
-    try:
-        from training.losses import CombinedLoss
-        criterion = CombinedLoss().to(device)
-    except ImportError:
-        from training.train import CombinedLoss
-        criterion = CombinedLoss().to(device)
-    total_loss = total_psnr = total_ssim = 0.0
-    count = 0
+def evaluate_model(
+    model: torch.nn.Module,
+    loader: DataLoader,
+    device: torch.device,
+    max_batches: int | None = None,
+    criterion: torch.nn.Module | None = None,
+) -> dict[str, Any]:
+    """
+    Evaluate a model over a loader.
 
+    Returns
+    -------
+    dict with mean ``psnr``/``ssim``/``nmse``/``val_loss``, the per-sample
+    vectors under ``per_sample`` (needed for paired significance tests), and a
+    per-acceleration breakdown when the loader mixes accelerations.
+    """
+    model.eval()
+    criterion = criterion or CombinedLoss().to(device)
+    acc = MetricAccumulator()
 
-    for x, y in loader:
-        x, y = x.to(device), y.to(device)
-        pred = model(x)
-        total_loss += criterion(pred, y).item()
-        total_psnr += compute_psnr(pred, y)
-        total_ssim += ssim_metric(pred, y)
-        count += 1
-        if n_samples and count >= n_samples:
+    for i, batch in enumerate(loader):
+        if max_batches is not None and i >= max_batches:
             break
 
+        batch = {
+            k: (v.to(device, non_blocking=True) if isinstance(v, torch.Tensor) else v)
+            for k, v in batch.items()
+        }
 
-    return {
-        "val_loss": total_loss / count,
-        "psnr_db":  total_psnr / count,
-        "ssim":     total_ssim / count,
+        if getattr(model, "expects_kspace", False):
+            pred = forward_model(model, batch["image"], batch["kspace"], batch["mask"])
+        else:
+            pred = forward_model(model, batch["image"])
+
+        pred = pred.float()
+        target = batch["target"].float()
+        data_range = batch["max_value"].float()
+
+        acc.update(
+            pred,
+            target,
+            data_range=data_range,
+            loss=float(criterion(pred, target, data_range=data_range)),
+            fnames=batch.get("fname"),
+            accelerations=batch.get("acceleration"),
+        )
+
+    summary = acc.compute()
+    result: dict[str, Any] = {
+        "val_loss": summary.get("loss", float("nan")),
+        "psnr_db": summary["psnr"],
+        "ssim": summary["ssim"],
+        "nmse": summary["nmse"],
+        "n_samples": summary["n"],
+        "per_sample": {"psnr": acc.psnr, "ssim": acc.ssim, "nmse": acc.nmse},
+        "worst": acc.worst(k=5),
     }
-
+    by_acc = acc.by_acceleration()
+    if len(by_acc) > 1:
+        result["by_acceleration"] = by_acc
+    return result
 
 
 # ---------------------------------------------------------------------------
-# Qualitative visualization
+# Qualitative visualisation
 # ---------------------------------------------------------------------------
 
 
 @torch.no_grad()
 def visualize_reconstructions(
-    model,
-    dataset,
-    device,
+    model: torch.nn.Module,
+    dataset: FastMRIKneeDataset,
+    device: torch.device,
     n_examples: int = 4,
     save_path: str = "results/reconstructions.png",
-):
-    os.makedirs(os.path.dirname(save_path) or ".", exist_ok=True)
-    indices = np.random.choice(len(dataset), min(n_examples, len(dataset)), replace=False)
+    seed: int = 0,
+    show_error: bool = True,
+) -> str:
+    """
+    Save a grid of ``[input | prediction | target | error]`` rows.
 
+    The error column is what makes the figure diagnostic rather than decorative:
+    two reconstructions can look identical at display contrast while differing
+    substantially at the tissue boundaries a radiologist reads.
+    """
+    from training.metrics import psnr as psnr_fn
+    from training.metrics import ssim as ssim_fn
 
-    fig, axes = plt.subplots(n_examples, 3, figsize=(12, 4 * n_examples))
-    fig.suptitle("FastMRI Reconstruction", fontsize=16, fontweight="bold")
+    Path(save_path).parent.mkdir(parents=True, exist_ok=True)
 
+    n_examples = min(n_examples, len(dataset))
+    if n_examples == 0:
+        raise ValueError("Dataset is empty; nothing to visualise")
 
-    col_titles = ["Input (Undersampled)", "SwinUNet Reconstruction", "Ground Truth"]
-    for col, title in enumerate(col_titles):
-        axes[0, col].set_title(title, fontsize=12)
+    rng = np.random.default_rng(seed)
+    indices = rng.choice(len(dataset), n_examples, replace=False)
 
+    n_cols = 4 if show_error else 3
+    fig, axes = plt.subplots(
+        n_examples, n_cols, figsize=(4 * n_cols, 4 * n_examples), squeeze=False
+    )
+    fig.suptitle("fastMRI reconstruction", fontsize=15, fontweight="bold")
+
+    titles = ["Input (zero-filled)", "Reconstruction", "Ground truth", "|Error|"]
+    for col in range(n_cols):
+        axes[0, col].set_title(titles[col], fontsize=11)
 
     model.eval()
     for row, idx in enumerate(indices):
-        x, y = dataset[idx]
-        x_in   = x.unsqueeze(0).to(device)
-        y_true = y.numpy().squeeze()
-        y_pred = model(x_in).cpu().numpy().squeeze()
-        x_np   = x.numpy().squeeze()
+        sample = dataset[int(idx)]
+        image = sample["image"].unsqueeze(0).to(device)
+        target = sample["target"].unsqueeze(0).to(device)
+        data_range = sample["max_value"].reshape(1).to(device)
 
+        if getattr(model, "expects_kspace", False):
+            pred = forward_model(
+                model,
+                image,
+                sample["kspace"].unsqueeze(0).to(device),
+                sample["mask"].unsqueeze(0).to(device),
+            )
+        else:
+            pred = forward_model(model, image)
+        pred = pred.float()
 
-        p = compute_psnr(
-            torch.tensor(y_pred).unsqueeze(0).unsqueeze(0),
-            torch.tensor(y_true).unsqueeze(0).unsqueeze(0),
+        p = float(psnr_fn(pred, target, data_range))
+        s = float(ssim_fn(pred, target, data_range))
+
+        # A complex input has no single displayable channel; show its magnitude.
+        inp = sample["image"]
+        inp_np = (
+            torch.sqrt((inp**2).sum(0)).numpy() if inp.shape[0] == 2 else inp.squeeze(0).numpy()
         )
-        s = ssim_metric(
-            torch.tensor(y_pred).unsqueeze(0).unsqueeze(0),
-            torch.tensor(y_true).unsqueeze(0).unsqueeze(0),
-        )
+        pred_np = pred.squeeze().cpu().numpy()
+        target_np = target.squeeze().cpu().numpy()
 
-
-        for col, img in enumerate([x_np, y_pred, y_true]):
-            axes[row, col].imshow(img, cmap="gray", vmin=0, vmax=1)
+        vmax = float(target_np.max()) or 1.0
+        for col, img in enumerate([inp_np, pred_np, target_np]):
+            axes[row, col].imshow(img, cmap="gray", vmin=0, vmax=vmax)
             axes[row, col].axis("off")
 
+        if show_error:
+            error = np.abs(pred_np - target_np)
+            im = axes[row, 3].imshow(error, cmap="inferno", vmin=0, vmax=vmax * 0.25)
+            axes[row, 3].axis("off")
+            plt.colorbar(im, ax=axes[row, 3], fraction=0.046, pad=0.04)
 
         axes[row, 1].set_title(
-            f"PSNR: {p:.2f} dB  |  SSIM: {s:.4f}",
-            fontsize=9, color="white",
-            bbox=dict(facecolor="black", alpha=0.6, pad=2),
+            f"PSNR {p:.2f} dB | SSIM {s:.4f}",
+            fontsize=9,
+            color="white",
+            bbox=dict(facecolor="black", alpha=0.65, pad=2),
         )
-
 
     plt.tight_layout()
     plt.savefig(save_path, dpi=150, bbox_inches="tight")
-    print(f"  Saved reconstruction grid → {save_path}")
-    plt.close()
-
+    plt.close(fig)
+    log.info("Saved reconstruction grid to %s", save_path)
+    return save_path
 
 
 # ---------------------------------------------------------------------------
-# Training curve plot
+# Training curves
 # ---------------------------------------------------------------------------
 
 
-def plot_training_history(history_path: str, save_path: str = None):
-    with open(history_path) as f:
-        hist = json.load(f)
+def plot_training_history(history_path: str | Path, save_path: str | None = None) -> str:
+    """
+    Plot loss, PSNR, SSIM and LR from a run's ``history.json``.
 
+    The trainer writes this file every epoch, so curves can be regenerated from
+    any run without a live TensorBoard process.
+    """
+    path = Path(history_path)
+    if path.is_dir():
+        path = path / "history.json"
+    if not path.exists():
+        raise FileNotFoundError(
+            f"No history at {path}. The trainer writes history.json into the run directory."
+        )
 
-    fig, axes = plt.subplots(1, 3, figsize=(15, 4))
-    epochs = range(1, len(hist["train_loss"]) + 1)
+    hist = json.loads(path.read_text())
 
+    def series(*names: str) -> list[float] | None:
+        for name in names:
+            if name in hist and hist[name]:
+                return hist[name]
+        return None
 
-    axes[0].plot(epochs, hist["train_loss"], label="Train Loss")
-    axes[0].plot(epochs, hist["val_loss"],   label="Val Loss")
-    axes[0].set_xlabel("Epoch"); axes[0].set_ylabel("Loss")
-    axes[0].set_title("Loss"); axes[0].legend()
+    train_loss = series("epoch/train_loss", "train_loss")
+    val_loss = series("epoch/val_loss", "val_loss")
+    val_psnr = series("epoch/val_psnr", "val_psnr")
+    val_ssim = series("epoch/val_ssim", "val_ssim")
+    lr = series("epoch/lr", "lr")
+    epochs = hist.get("epoch") or list(range(1, len(train_loss or []) + 1))
 
+    panels = [
+        ("Loss", [(train_loss, "Train"), (val_loss, "Validation")], None),
+        ("PSNR (dB)", [(val_psnr, "Validation")], "max"),
+        ("SSIM", [(val_ssim, "Validation")], "max"),
+        ("Learning rate", [(lr, "LR")], "log"),
+    ]
+    panels = [p for p in panels if any(s is not None for s, _ in p[1])]
 
-    axes[1].plot(epochs, hist["val_psnr"], color="C2")
-    axes[1].set_xlabel("Epoch"); axes[1].set_ylabel("PSNR (dB)")
-    axes[1].set_title("Validation PSNR")
+    fig, axes = plt.subplots(1, len(panels), figsize=(4.5 * len(panels), 4), squeeze=False)
+    for ax, (title, series_list, style) in zip(axes[0], panels):
+        for values, label in series_list:
+            if values:
+                ax.plot(epochs[: len(values)], values, label=label, linewidth=1.6)
+        ax.set_xlabel("Epoch")
+        ax.set_title(title)
+        ax.grid(True, alpha=0.3)
+        if style == "log":
+            ax.set_yscale("log")
+        elif style == "max":
+            best_values = series_list[0][0]
+            if best_values:
+                ax.axhline(max(best_values), color="grey", linestyle="--", alpha=0.6)
+                ax.set_title(f"{title} (best {max(best_values):.4g})")
+        if len(series_list) > 1:
+            ax.legend(frameon=False)
 
-
-    axes[2].plot(epochs, hist["val_ssim"], color="C3")
-    axes[2].set_xlabel("Epoch"); axes[2].set_ylabel("SSIM")
-    axes[2].set_title("Validation SSIM")
-
-
-    plt.suptitle(os.path.basename(history_path).replace("_history.json", ""), fontsize=13)
+    fig.suptitle(path.parent.name, fontsize=13, fontweight="bold")
     plt.tight_layout()
 
-
-    out = save_path or history_path.replace("_history.json", "_curves.png")
+    out = str(save_path or path.with_name("training_curves.png"))
     plt.savefig(out, dpi=150, bbox_inches="tight")
-    print(f"  Saved training curves → {out}")
-    plt.close()
-
+    plt.close(fig)
+    log.info("Saved training curves to %s", out)
+    return out
 
 
 # ---------------------------------------------------------------------------
-# Architecture comparison table
+# Architecture comparison
 # ---------------------------------------------------------------------------
 
 
-def compare_architectures(results: dict):
-    """results = {model_name: {val_loss, psnr_db, ssim}}"""
-    print(f"\n{'Architecture':<20} {'Val Loss':>10} {'PSNR (dB)':>10} {'SSIM':>8}")
-    print("─" * 52)
+def compare_architectures(
+    results: dict[str, dict],
+    metric: str = "psnr",
+    reference: str | None = None,
+    save_path: str | None = None,
+) -> dict:
+    """
+    Print and return a statistically grounded comparison table.
+
+    Parameters
+    ----------
+    results
+        ``{model_name: evaluate_model(...) output}``. Per-sample vectors are
+        used when present so the comparison is paired.
+    metric
+        ``psnr``, ``ssim`` or ``nmse``.
+    reference
+        Baseline model name. Defaults to the first entry.
+    """
+    print(f"\n{'Architecture':<22}{'Val loss':>11}{'PSNR (dB)':>12}{'SSIM':>10}{'NMSE':>11}")
+    print("-" * 66)
     for name, m in results.items():
-        print(f"{name:<20} {m['val_loss']:>10.4f} {m['psnr_db']:>10.2f} {m['ssim']:>8.4f}")
+        print(
+            f"{name:<22}{m['val_loss']:>11.4f}{m['psnr_db']:>12.2f}"
+            f"{m['ssim']:>10.4f}{m['nmse']:>11.5f}"
+        )
 
+    per_sample = {
+        name: m["per_sample"] for name, m in results.items() if m.get("per_sample")
+    }
+
+    comparison: dict = {}
+    if len(per_sample) >= 2:
+        lengths = {len(v[metric]) for v in per_sample.values()}
+        if len(lengths) == 1:
+            comparison = compare_models(per_sample, metric=metric, reference=reference)
+            print()
+            print(format_comparison_table(comparison))
+        else:
+            log.warning(
+                "Models were evaluated on different numbers of samples %s; "
+                "skipping the paired test, which requires identical sample sets.",
+                sorted(lengths),
+            )
+
+    if save_path:
+        Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "summary": {
+                name: {k: v for k, v in m.items() if k != "per_sample"}
+                for name, m in results.items()
+            },
+            "statistics": comparison,
+        }
+        Path(save_path).write_text(json.dumps(payload, indent=2, default=str))
+        log.info("Saved comparison to %s", save_path)
+
+    return comparison
 
 
 # ---------------------------------------------------------------------------
-# Main
+# CLI
 # ---------------------------------------------------------------------------
 
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Evaluate MRI Reconstruction Models")
-    parser.add_argument("--model",      default="swinunet", choices=["unet", "bt_unet", "swinunet"])
-    parser.add_argument("--ckpt",       required=True, help="Path to checkpoint .pt file")
-    parser.add_argument("--data_dir",   default="data/knee_singlecoil_val")
-    parser.add_argument("--n_vis",      type=int, default=4, help="Number of visual examples")
+def _main() -> int:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+
+    parser = argparse.ArgumentParser(description="Evaluate MRI reconstruction models")
+    parser.add_argument("--model", default=None, help="Architecture (legacy checkpoints only)")
+    parser.add_argument("--ckpt", required=True, help="Checkpoint .pt file")
+    parser.add_argument("--data_dir", default="data/knee_singlecoil_val")
+    parser.add_argument("--n_vis", type=int, default=4)
+    parser.add_argument("--batch_size", type=int, default=4)
     parser.add_argument("--output_dir", default="results")
+    parser.add_argument("--no-ema", action="store_true", help="Evaluate raw, not EMA, weights")
     args = parser.parse_args()
 
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = load_model(args.model, args.ckpt, device, use_ema=not args.no_ema)
 
-    device  = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model   = load_model(args.model, args.ckpt, device)
-    dataset = FastMRIKneeDataset(args.data_dir)
-    loader  = DataLoader(dataset, batch_size=4, shuffle=False, num_workers=2)
+    dataset = FastMRIKneeDataset(
+        args.data_dir, complex_input=int(getattr(model, "in_channels", 1)) == 2
+    )
+    loader = DataLoader(
+        dataset, batch_size=args.batch_size, shuffle=False, num_workers=2, collate_fn=collate
+    )
 
-
-    print(f"\n── Quantitative Evaluation ({len(dataset)} volumes) ────────")
+    print(f"\n-- Quantitative evaluation ({len(dataset)} slices) --")
     metrics = evaluate_model(model, loader, device)
-    print(f"  Val Loss : {metrics['val_loss']:.4f}")
+    print(f"  Val loss : {metrics['val_loss']:.4f}")
     print(f"  PSNR     : {metrics['psnr_db']:.2f} dB")
     print(f"  SSIM     : {metrics['ssim']:.4f}")
+    print(f"  NMSE     : {metrics['nmse']:.5f}")
+
+    from training.stats import bootstrap_ci
+
+    print(f"  PSNR 95% CI: {bootstrap_ci(metrics['per_sample']['psnr'])}")
+
+    if metrics.get("worst"):
+        print("\n  Worst slices by PSNR:")
+        for fname, value in metrics["worst"]:
+            print(f"    {fname:<32} {value:.2f} dB")
+
+    name = args.model or "model"
+    visualize_reconstructions(
+        model,
+        dataset,
+        device,
+        n_examples=args.n_vis,
+        save_path=os.path.join(args.output_dir, f"{name}_reconstructions.png"),
+    )
+    return 0
 
 
-    print(f"\n── Qualitative Visualization ──────────────────────────")
-    vis_path = os.path.join(args.output_dir, f"{args.model}_reconstructions.png")
-    visualize_reconstructions(model, dataset, device, n_examples=args.n_vis, save_path=vis_path)
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(_main())
