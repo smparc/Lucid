@@ -1,377 +1,341 @@
 # Lucid: Accelerated MRI Reconstruction
 
-
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![PyTorch 2.0+](https://img.shields.io/badge/pytorch-2.0%2B-ee4c2c.svg)](https://pytorch.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
+> Recovering high-quality MRI images from undersampled k-space using a
+> hierarchical Swin Transformer, constrained by the physics of the acquisition.
 
-> Recovering high-quality MRI images from undersampled k-space data using a hybrid Swin Transformer + U-Net architecture.
+MRI is diagnostically invaluable and slow to acquire. **Lucid** collects only a
+fraction of the raw frequency-domain data (k-space) and reconstructs a
+full-quality image from it, cutting scan time proportionally.
 
-
-MRI scans are invaluable for diagnosis but notoriously slow to acquire. **Lucid** addresses this by collecting only a fraction of the raw frequency-domain data (k-space), then using deep learning to reconstruct a full-quality image — dramatically reducing patient scan time.
-
-
----
-
-
-## Results
-
-
-| Architecture | Val. Loss | PSNR (dB) | SSIM | Params (M) | Inference (ms) |
-|---|---|---|---|---|---|
-| U-Net Baseline | 0.0496 | 28.03 | 0.6935 | 7.8 | 18.5 |
-| BT-UNet | 0.0412 | 29.87 | 0.7102 | — | — |
-| **SwinUNet (Best)** | **0.0352** | **33.10** | **0.7274** | 27.3 | 42.7 |
-
-
-The SwinUNet achieves **~5 dB improvement** over the baseline U-Net, with superior preservation of fine anatomical details (cartilage boundaries, meniscal structures, bone margins).
-
+The distinguishing feature is that reconstruction is not treated as generic
+image restoration. We know exactly which Fourier coefficients the scanner
+measured, so an unrolled **data-consistency** cascade restores them after every
+learned refinement. The network can only ever modify frequencies that were never
+acquired — the constraint that separates reconstruction from plausible-looking
+inpainting.
 
 ---
 
-
-## Quick Start
-
-
-### Installation
-
+## Quick start
 
 ```bash
-# Clone the repository
-git clone <repository-url>
-cd vba_agent2
-
-
-# Create virtual environment
-python -m venv .venv
-.venv\Scripts\activate  # Windows
-# source .venv/bin/activate  # Linux/Mac
-
-
-# Install dependencies
-pip install -r requirements.txt
-
-
-# Or install as a package (editable mode)
-pip install -e ".[dev]"
+git clone <repository-url> && cd Lucid
+python -m venv .venv && .venv\Scripts\activate      # Linux/macOS: source .venv/bin/activate
+pip install -e ".[dev,tracking,export]"
 ```
 
-
-### Sanity Check (No Data Required)
-
+Verify every architecture builds and runs — no data required:
 
 ```bash
 python main.py test_models
 ```
 
-
-This runs a forward pass through all three architectures and verifies output shapes and parameter counts.
-
-
-### Download Data
-
-
-1. Register at [fastMRI](https://fastmri.med.nyu.edu/)
-2. Download: `Knee MRI → Single-coil`
-3. Place `.h5` files:
-
-
-```
-data/
-├── knee_singlecoil_train/    ← training volumes
-└── knee_singlecoil_val/      ← validation volumes
-```
-
-
-### Train
-
+Train end to end without downloading anything:
 
 ```bash
-# Train SwinUNet with optimized config
+python scripts/make_synthetic_data.py --out data/synthetic --volumes 16
+python main.py train --config configs/smoke.yaml data.train_dir=data/synthetic
+```
+
+For real experiments see [`data/README.md`](data/README.md) to obtain fastMRI,
+then:
+
+```bash
+# Strongest configuration: SwinUNet + unrolled data consistency
+python main.py train --config configs/swinunet_dc.yaml
+
+# Image-domain baselines
 python main.py train --config configs/swinunet.yaml
-
-
-# Train U-Net baseline
 python main.py train --config configs/unet.yaml
+python main.py train --config configs/bt_unet.yaml
 
+# Override anything from the CLI (dot notation, validated)
+python main.py train --config configs/swinunet.yaml training.lr=5e-5 data.acceleration=[4,8]
 
-# Override config values via CLI
-python main.py train --config configs/swinunet.yaml training.lr=5e-5 training.batch_size=6
-
-
-# Resume from checkpoint
-python main.py train --config configs/swinunet.yaml --resume outputs/swinunet/checkpoints/best.pt
+# Resume exactly where a run stopped
+python main.py train --config configs/swinunet.yaml --resume outputs/swinunet/checkpoints/last.pt
 ```
 
-
-### Evaluate
-
+Evaluate, compare, benchmark, export:
 
 ```bash
-python main.py eval --model swinunet --ckpt outputs/swinunet_optimized/checkpoints/best.pt
+python main.py eval      --ckpt outputs/swinunet_dc/checkpoints/best.pt
+python main.py compare   --ckpt_dir outputs          # with significance tests
+python main.py benchmark --ckpt outputs/swinunet_dc/checkpoints/best.pt
+python main.py export    --ckpt outputs/swinunet/checkpoints/best.pt --format onnx
+python main.py curves    --run outputs/swinunet_dc
 ```
 
+Every command returns a non-zero exit code on failure.
 
-### Benchmark & Export
+---
 
+## Reproducing results
+
+This repository does not ship trained weights, and **no benchmark numbers are
+quoted here**. Earlier versions of this README carried a results table whose
+headline configuration could not be constructed at all (see below), so numbers
+now come only from runs you can reproduce.
+
+Run the suite yourself:
 
 ```bash
-# Benchmark inference speed
-python main.py benchmark --ckpt outputs/swinunet_optimized/checkpoints/best.pt
-
-
-# Export to ONNX for deployment
-python main.py export --ckpt outputs/swinunet_optimized/checkpoints/best.pt --format onnx
-
-
-# Export to TorchScript
-python main.py export --ckpt outputs/swinunet_optimized/checkpoints/best.pt --format torchscript
+for cfg in unet bt_unet swinunet swinunet_dc; do
+    python main.py train --config configs/$cfg.yaml
+done
+python main.py compare --ckpt_dir outputs --metric psnr --reference unet_baseline
 ```
 
+`compare` prints bootstrap confidence intervals and Holm-corrected paired
+permutation tests, so the output states whether a difference is resolvable
+rather than only which number is larger.
 
 ---
 
+## Architecture
 
-## Project Structure
+### SwinUNet (primary)
 
+A hierarchical Swin Transformer in a U-Net encoder–decoder:
+
+- **Patch embedding** — non-overlapping patches projected to `embed_dim`.
+- **Shifted-window attention** — attention within `ws × ws` windows, alternating
+  regular and shifted partitioning. Cost is **O(n)** in image area rather than
+  O(n²), which is what makes 320×320 feasible.
+- **Patch merging / expanding** — hierarchical down- and upsampling.
+- **Skip connections** — encoder features fused at each decoder scale.
+- **Global residual** — predicts a correction to the zero-filled input, with a
+  zero-initialised output layer so training begins from the exact identity.
+
+Feature maps are padded to the window size, so any input resolution works and
+one trained model runs at any size.
+
+### Data consistency
 
 ```
-├── main.py                  # Unified CLI entry point
-├── config.py                # YAML config loader with CLI overrides
-├── inference.py             # Production inference pipeline + ONNX export
-├── pyproject.toml           # Package metadata & tool config
-├── requirements.txt         # Python dependencies
-├── Dockerfile               # Containerized training/inference
-│
-├── configs/                 # Experiment configurations (YAML)
-│   ├── default.yaml         # Base config (all defaults)
-│   ├── swinunet.yaml        # SwinUNet optimized
-│   ├── unet.yaml            # U-Net baseline
-│   └── bt_unet.yaml         # BT-UNet
-│
-├── models/                  # Architecture implementations
-│   ├── unet.py              # Baseline U-Net
-│   ├── bt_unet.py           # U-Net + Transformer bottleneck
-│   └── swinunet.py          # SwinUNet (best model)
-│
-├── data/                    # Data loading & preprocessing
-│   ├── preprocessing.py     # FastMRI dataset, masks, FFT utils
-│   └── README.md            # Data download instructions
-│
-├── training/                # Training & evaluation
-│   ├── train.py             # Trainer class (AMP, logging, checkpoints)
-│   └── evaluate.py          # Metrics, visualization, comparison
-│
-├── utils/                   # Utilities
-│   ├── logger.py            # TensorBoard + W&B unified logger
-│   └── reproducibility.py   # Seed management
-│
-├── tests/                   # Unit tests (pytest)
-│   ├── test_models.py       # Model forward pass, gradients, shapes
-│   ├── test_data.py         # Preprocessing, masks, FFT
-│   └── test_training.py     # Loss, metrics, config, augmentation
-│
-└── notebooks/               # Analysis & visualization
-    └── results_visualization.ipynb
+k_pred     = F(x_pred)
+k_dc[m=1]  = λ·k_measured + (1−λ)·k_pred     # trust the scanner
+k_dc[m=0]  = k_pred                          # network fills the gaps
+x_dc       = F⁻¹(k_dc)
 ```
 
+`λ` is learnable and initialised at hard consistency. `CascadedNet` interleaves
+`n_cascades` denoisers with this operator — one unrolled iteration of a
+proximal-gradient solver whose proximal step has been learned.
+
+Data consistency requires phase, so it forces complex (2-channel) I/O. Config
+validation enforces this rather than silently degrading.
+
+### Baselines
+
+- **U-Net** — 4 levels, InstanceNorm + LeakyReLU. `NormUNet` adds the fastMRI
+  instance-normalisation wrapper for exact scale equivariance.
+- **BT-UNet** — U-Net with a Transformer encoder at the bottleneck. Positional
+  embeddings interpolate to any bottleneck grid.
 
 ---
 
+## What changed in v2
 
-## Architectures
+The original codebase could not run. Three independent defects made every
+documented entry point fail:
 
-
-### U-Net Baseline
-Standard encoder-decoder with skip connections. 4 downsampling stages (32→64→128→256→512 channels), InstanceNorm2D + LeakyReLU, ConvTranspose2d for upsampling.
-
-
-### BT-UNet (Transformer at Bottleneck)
-Extends U-Net by injecting a standard Transformer encoder at the bottleneck. Features are flattened into tokens, processed through multi-head self-attention, then reshaped for the decoder — adding global context at the most abstract layer.
-
-
-### SwinUNet (Best Model)
-Replaces the CNN backbone with a hierarchical **Swin Transformer** in a U-Net-like structure:
-
-
-- **Patch Embedding** — Non-overlapping patches projected to feature space
-- **Shifted Window Attention** — Linear complexity self-attention via local windows with shifted partitioning
-- **Hierarchical Encoder/Decoder** — Patch merging/expanding for multi-scale features
-- **Skip Connections** — Encoder features concatenated at each decoder scale
-
-
-Key advantage: **O(n)** complexity vs O(n²) for standard attention, making high-resolution medical image processing feasible.
-
-
----
-
-
-## Training Features
-
-
-| Feature | Description |
+| Defect | Consequence |
 |---|---|
-| **Mixed Precision (AMP)** | FP16 training for 2x speedup on modern GPUs |
-| **Config-Driven** | YAML configs with dot-notation CLI overrides |
-| **Experiment Tracking** | TensorBoard + Weights & Biases |
-| **Early Stopping** | Patience-based on validation loss |
-| **Cosine Annealing** | LR schedule with warm restarts |
-| **Gradient Clipping** | Stability for transformer training |
-| **Checkpoint Management** | Best model + per-epoch saves |
-| **Resume Training** | Continue from any checkpoint |
-| **Augmentation** | Random flips + 90° rotations |
+| `SwinUNet` reshaped windows without padding | At the documented config (320px, patch 4, 3 levels, window 8) stage 3 is 20×20 and 20 % 8 ≠ 0. Construction raised `RuntimeError`, so **the headline model never ran**. |
+| `utils/reproductibility.py` misspelled | `utils/__init__.py` imported `utils.reproducibility`, so importing `training` raised `ModuleNotFoundError`. |
+| `from_checkpoint` / `_build_model` missing decorators | Plain functions on the class; `from_checkpoint(path)` bound `path` to `cls`. Every inference, benchmark and export path raised immediately. |
 
+And several that ran but produced wrong or meaningless results:
+
+| Defect | Consequence |
+|---|---|
+| `EMAModel.average_parameters` lacked `@contextmanager` | The body never executed; validation silently used raw training weights. |
+| EMA wrote `shadow`, loaders read `shadow_params` | EMA weights were never loaded anywhere, silently. |
+| `ResidualDCWrapper` skipped DC when k-space was `None` | The trainer only ever passed the image, so `data_consistency.enabled: true` was a **complete no-op**. |
+| DC returned `x.abs()` | Phase discarded, so cascading was impossible. |
+| `sigmoid(lambda_init)` | A requested hard consistency of 1.0 became 0.73. |
+| `equispaced_mask` added the centre on top of `mask[::R]` | Effective acceleration 3.2× at a nominal 4× — a 20% denser acquisition than reported. |
+| PSNR averaged MSE across the batch before the log | Values depended on batch size, so the U-Net (batch 8) and SwinUNet (batch 6) were not comparable. |
+| Metrics used a hard-coded data range of 1.0 | Wrong denominator under per-slice scaling. |
+| Validation ran inside `autocast` | Metrics computed in fp16. |
+| Augmentation applied after undersampling | Rotated the aliasing away from the phase-encode axis that produced it. |
+| Epoch metrics logged at `step=epoch`, batch at `global_step` | W&B rejects out-of-order steps; epoch curves were dropped. |
+| `resume` restored no patience or best score | Resuming reset early stopping and could overwrite a better checkpoint. |
+| `save_top_k` retained by mtime | Kept the *newest* k, not the *best* k. |
+| `.github/.workflows/ci.yml` | GitHub only reads `.github/workflows/`; CI had never run. |
+| `test_models` caught all exceptions and exited 0 | The sanity job passed green while nothing worked. |
+| `AttentionExtractor` read weights from the forward output | `WindowAttention` returns a tensor; the hook matched nothing and every attention figure was empty. |
+
+Additions: unrolled DC cascade, complex I/O, per-image metrics with NMSE,
+bootstrap CIs and paired permutation tests, DropPath, truncated-normal init,
+fused attention, gradient checkpointing, multi-acceleration training, TTA,
+MC-dropout uncertainty, config validation, a synthetic data generator, run
+manifests with git SHA, and 212 tests.
 
 ---
 
+## Project structure
+
+```
+├── main.py                   # CLI with real exit codes
+├── config.py                 # Layered YAML config with schema validation
+├── inference.py              # Inference, TTA, uncertainty, ONNX/TorchScript
+│
+├── configs/
+│   ├── default.yaml          # Every default, documented
+│   ├── swinunet_dc.yaml      # Strongest: SwinUNet + DC cascade
+│   ├── swinunet.yaml         # Image-domain SwinUNet
+│   ├── unet.yaml             # U-Net baseline
+│   ├── bt_unet.yaml          # Transformer bottleneck
+│   └── smoke.yaml            # Minutes-long end-to-end test
+│
+├── models/
+│   ├── swinunet.py           # Swin Transformer U-Net
+│   ├── unet.py               # U-Net and NormUNet
+│   ├── bt_unet.py            # Transformer bottleneck
+│   ├── data_consistency.py   # DC layer and unrolled cascade
+│   ├── fourier.py            # Single source of truth for FFT conventions
+│   ├── layers.py             # DropPath, ConvBlock, init
+│   └── registry.py           # One place that builds models
+│
+├── data/
+│   ├── preprocessing.py      # Physics-aware dataset
+│   ├── masks.py              # Random / equispaced / golden-ratio masks
+│   └── README.md
+│
+├── training/
+│   ├── train.py              # Trainer
+│   ├── evaluate.py           # Evaluation and comparison
+│   ├── losses.py             # L1, SSIM, frequency, edge, perceptual
+│   ├── metrics.py            # Per-image PSNR / SSIM / NMSE
+│   └── stats.py              # Bootstrap CIs, permutation tests, Holm
+│
+├── utils/
+│   ├── logger.py             # TensorBoard + W&B + history.json
+│   ├── ema.py                # Exponential moving average
+│   ├── schedulers.py         # Warmup schedules
+│   ├── reproducibility.py    # Seeding, worker seeding, run manifest
+│   └── visualizations.py     # Figures and attention maps
+│
+├── scripts/make_synthetic_data.py
+└── tests/                    # 212 tests, ~6 s
+```
+
+---
 
 ## Configuration
 
+Precedence: `configs/default.yaml` → experiment YAML → programmatic → CLI.
 
-All hyperparameters are managed via YAML configs in `configs/`. The system supports:
-
-
-1. **Base config** (`configs/default.yaml`) — all defaults
-2. **Experiment config** — overrides base (e.g., `configs/swinunet.yaml`)
-3. **CLI overrides** — highest priority, dot-notation: `training.lr=1e-4`
-
-
-Example config:
 ```yaml
 model:
   name: swinunet
-  params:
-    embed_dim: 64
-    ws: 8
+  complex: true
+  params: { embed_dim: 48, ws: 8, n_levels: 3 }
+  data_consistency: { enabled: true, mode: cascade, n_cascades: 4 }
 
+data:
+  acceleration: [4, 8]          # one model across both factors
+  undersample_domain: cropped   # required for exact DC
 
 training:
   epochs: 50
-  batch_size: 6
-  lr: 5.0e-5
-  amp: true
-
-
-logging:
-  tensorboard: true
-  wandb: true
-  wandb_project: lucid-mri
+  lr: 4.0e-5
+  monitor: val_ssim
+  monitor_mode: max
 ```
 
+Configs are validated on load. Unknown keys are errors, not silent no-ops — a
+typo'd `learning_rate` that quietly keeps the default is indistinguishable from
+a successful override until you compare two runs and find them identical.
 
 ---
 
+## Training features
+
+| Feature | Notes |
+|---|---|
+| Data consistency | Unrolled cascade; measured k-space restored every stage |
+| Mixed precision | bf16 preferred; FFTs and metrics forced to fp32 |
+| EMA | Validated and checkpointed on the averaged weights |
+| Per-step LR schedule | Warmup resolved in steps, not epochs |
+| Multi-acceleration | Train once across R ∈ {4, 8}, reported per factor |
+| Gradient accumulation | Decouples effective batch from memory |
+| Checkpointing | Top-k by monitored metric, plus `best.pt` and `last.pt` |
+| Resume | Optimiser, scheduler, scaler, EMA, patience and best score |
+| Reproducibility | Per-worker seeding; run manifest records git SHA and hardware |
+| Failure analysis | Worst-slice reporting and per-acceleration breakdown |
+
+---
 
 ## Deployment
 
-
-### ONNX Export
 ```python
 from inference import MRIReconstructionPipeline
 
+pipe = MRIReconstructionPipeline.from_checkpoint("outputs/swinunet/checkpoints/best.pt")
 
-pipe = MRIReconstructionPipeline.from_checkpoint("checkpoints/best.pt")
-pipe.export_onnx("exports/swinunet.onnx")
+recon = pipe.reconstruct(zero_filled_image)
+recon = pipe.reconstruct(zero_filled_image, tta=True)          # dihedral averaging
+mean, std = pipe.reconstruct_with_uncertainty(zero_filled_image)  # MC dropout
+
+pipe.export_onnx("exports/swinunet.onnx")   # verified against PyTorch output
 ```
 
-
-### Python Inference API
-```python
-from inference import MRIReconstructionPipeline
-
-
-pipe = MRIReconstructionPipeline.from_checkpoint("checkpoints/best.pt")
-reconstruction = pipe.reconstruct(undersampled_image)
-reconstruction, time_ms = pipe.reconstruct(undersampled_image, return_time=True)
-```
-
+Exports are numerically verified against the PyTorch model; an export that
+produces a *different* model is more dangerous than one that fails outright.
 
 ---
-
 
 ## Testing
 
-
 ```bash
-# Run all tests
-pytest tests/ -v
-
-
-# Run with coverage
-pytest tests/ --cov=models --cov=data --cov=training
-
-
-# Run specific test file
-pytest tests/test_models.py -v
+pytest tests/ -q                    # 212 tests, ~6 s
+pytest tests/ --cov --cov-report=term
+pytest tests/test_physics.py -v     # Fourier and data-consistency exactness
 ```
 
+`tests/test_physics.py` is the scientifically load-bearing file: it asserts that
+the Fourier pair round-trips exactly, that hard data consistency restores
+measured coefficients to floating-point precision, and that the cascade's final
+output still agrees with the measurements. A broken DC layer still trains and
+still produces a falling loss curve — only an exactness assertion catches it.
 
 ---
 
+## Problem formulation
 
-## Docker
-
-
-```bash
-# Build
-docker build -t lucid-mri .
-
-
-# Train
-docker run --gpus all -v ./data:/app/data -v ./outputs:/app/outputs \
-    lucid-mri train --config configs/swinunet.yaml
-
-
-# Inference
-docker run --gpus all lucid-mri benchmark --ckpt /app/outputs/best.pt
-```
-
-
----
-
-
-## Problem Formulation
-
-
-Given undersampled k-space measurements:
-
+Given undersampled measurements
 
 $$y = M \odot \mathcal{F}(x)$$
 
+with $\mathcal{F}$ the Fourier transform, $M$ a binary sampling mask and $x$ the
+fully sampled image, we learn $f_\theta$ such that
 
-where $\mathcal{F}$ is the Fourier transform, $M$ is a binary sampling mask, and $x$ is the fully-sampled image, the goal is to learn:
+$$\hat{x} = f_\theta(y', M, y) \approx x$$
 
-
-$$\hat{x} = f_\theta(y')$$
-
-
-where $y'$ is the zero-filled reconstruction from the inverse Fourier transform of $y$, such that $\hat{x} \approx x$.
-
+where $y' = \mathcal{F}^{-1}(y)$ is the zero-filled reconstruction. Passing $M$
+and $y$ — not just $y'$ — is what makes the data-consistency constraint
+expressible.
 
 ---
-
 
 ## Citation
 
-
-If you use this code in your research, please cite:
-
-
 ```bibtex
-u/misc{lucid2024,
-  title={Lucid: Accelerated MRI Reconstruction with SwinUNet},
-  author={Lucid Team},
-  year={2024},
-  url={https://github.com/lucid-mri}
+@misc{lucid2026,
+  title  = {Lucid: Physics-Informed Accelerated MRI Reconstruction with SwinUNet},
+  author = {Park, Matthew},
+  year   = {2026},
+  url    = {https://github.com/lucid-mri}
 }
 ```
 
-
----
-
-
 ## License
 
-
-MIT License. See [LICENSE](LICENSE) for details.
+MIT — see [LICENSE](LICENSE). **Not for clinical use.**
