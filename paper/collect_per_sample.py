@@ -31,10 +31,11 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from data.preprocessing import FastMRIKneeDataset, collate  # noqa: E402
-from torch.utils.data import DataLoader  # noqa: E402
-from training.evaluate import evaluate_model, load_model  # noqa: E402
-from training.metrics import MetricAccumulator  # noqa: E402
+from torch.utils.data import DataLoader
+
+from data.preprocessing import FastMRIKneeDataset, collate
+from training.evaluate import evaluate_model, load_model
+from training.metrics import MetricAccumulator
 
 
 def zero_filled_vectors(data_dir: str, crop: int) -> dict[str, list[float]]:

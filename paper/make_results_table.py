@@ -14,7 +14,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
+
+# The capacity-matched table below runs a paired test, which lives in the
+# project package; make it importable when this script is run from anywhere.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 # Display name and one-line description for each run, in table order.
 LABELS = [
