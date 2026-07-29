@@ -79,7 +79,7 @@ significant under a paired test. I do not restate the previously reported
 fastMRI figures as validated results: they are not reproducible from the
 released artifact, and the corrections to the sampling and metric definitions
 mean that numbers produced under the old protocol are not comparable to numbers
-produced under the new one. The revised system, its 217-test suite, and a
+produced under the new one. The revised system, its 267-test suite, and a
 synthetic data generator that makes the full pipeline runnable without the
 fastMRI download are released so that the benchmark numbers can be regenerated
 under a protocol that is stated precisely and checked automatically.
@@ -184,7 +184,8 @@ table, and exited with status~0.
         capacity-matched controls, isolating the contribution of complex-valued
         input and of the data-consistency cascade from that of parameter count
         (Section~\ref{sec:ablation}).
-  \item \textbf{A verifiable artifact}: 217 automated tests including exactness
+  \item \textbf{A verifiable artifact}: 267 automated tests at \SI{88}{\percent} statement
+        coverage, including exactness
         assertions on the Fourier and data-consistency operators, schema
         validation that rejects invalid configurations before training starts,
         and a synthetic data generator that makes the entire pipeline runnable
@@ -896,7 +897,8 @@ Table~\ref{tab:cost} are measured from models that run.
 
 \subsection{Testing}
 
-The suite comprises 217 tests running in roughly thirteen seconds on CPU, organised
+The suite comprises 267 tests covering \SI{88}{\percent} of statements and
+running in under a minute on CPU, organised
 so that each previously shipped defect has a corresponding regression test.
 Notable coverage:
 

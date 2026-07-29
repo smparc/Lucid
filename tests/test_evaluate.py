@@ -22,18 +22,18 @@ import torch
 
 matplotlib.use("Agg")  # no display in CI
 
-from config import load_config  # noqa: E402
-from data.preprocessing import FastMRIKneeDataset, collate  # noqa: E402
-from models.registry import build_model  # noqa: E402
-from torch.utils.data import DataLoader  # noqa: E402
-from training.evaluate import (  # noqa: E402
+from torch.utils.data import DataLoader
+
+from config import load_config
+from data.preprocessing import FastMRIKneeDataset, collate
+from models.registry import build_model
+from training.evaluate import (
     compare_architectures,
     evaluate_model,
     load_model,
     plot_training_history,
     visualize_reconstructions,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -308,7 +308,7 @@ class TestPlotTrainingHistory:
         assert (tmp_path / "training_curves.png").exists()
 
     def test_missing_history_raises_with_guidance(self, tmp_path):
-        with pytest.raises(FileNotFoundError, match="history.json"):
+        with pytest.raises(FileNotFoundError, match=r"history\.json"):
             plot_training_history(tmp_path)
 
     def test_tolerates_partial_history(self, tmp_path):

@@ -20,8 +20,8 @@ import torch
 
 matplotlib.use("Agg")
 
-from models.swinunet import SwinUNet, WindowAttention  # noqa: E402
-from utils.visualizations import (  # noqa: E402
+from models.swinunet import SwinUNet, WindowAttention
+from utils.visualizations import (
     AttentionExtractor,
     plot_architecture_comparison,
     plot_attention_maps,
