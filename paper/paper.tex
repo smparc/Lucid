@@ -417,6 +417,44 @@ A second issue compounds this: the peak signal value was hard-coded to
 so the denominator was wrong by a per-sample factor. Both are corrected in
 Section~\ref{sec:metrics}.
 
+\paragraph{Evidence in the original figures.} The training curves published with
+the prior study are reproduced in Figure~\ref{fig:prior-curves}, because they
+document these defects directly rather than merely being consistent with them.
+
+Three observations. First, the U-Net's SSIM panel oscillates between
+\num{0.66} and \num{0.74} from epoch to epoch for sixty epochs and never
+converges, while the loss curve immediately beside it descends smoothly and
+monotonically. A model whose objective is converging while a metric computed on
+the same predictions is not is a symptom of an unstable \emph{metric}, not an
+unstable model---which is what a fixed data range and half-precision evaluation
+would produce. The SwinUNet's SSIM panel, computed at a different batch size, is
+comparatively smooth.
+
+Second, the run labels record different batch sizes---\code{bs8} for the U-Net
+and \code{bs6} for the SwinUNet---confirming that the two headline numbers were
+produced under precisely the condition that makes the batch-averaged PSNR
+formulation non-comparable (Table~\ref{tab:psnr}).
+
+Third, the labels disagree with the text they illustrate. The U-Net panel is
+tagged \code{ep30} but plots sixty epochs. The SwinUNet panel is tagged
+\code{lr5e-4}, while the released configuration for that model specifies
+\num{5e-5} and the prior study's ablation section reports that ``optimal
+performance'' was obtained at \num{8e-5}. Three different learning rates are
+attributed to the same result.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\textwidth]{figures/curves_unet_prior.jpg}\\[6pt]
+\includegraphics[width=\textwidth]{figures/curves_swinunet_prior.jpg}
+\caption{Training curves from the prior study: U-Net (top) and SwinUNet
+(bottom). Reproduced here as evidence for the measurement defects of
+Section~\ref{sec:audit}, not as results. Note the non-converging SSIM trace in
+the top-right panel against the smoothly descending loss beside it; the
+differing batch sizes in the run labels (\code{bs8} versus \code{bs6}); and the
+\code{ep30} label on a sixty-epoch plot.}
+\label{fig:prior-curves}
+\end{figure}
+
 \subsubsection{Augmentation ordering}
 
 Augmentation was applied to the already-undersampled input and its target as a
@@ -439,6 +477,48 @@ modification time rather than the $k$ best by metric. Resuming restored weights
 and optimiser state but neither the best score nor the early-stopping counter,
 so every resume reset patience and could overwrite a better \code{best.pt} with
 a worse one.
+
+\subsubsection{Evidence in the qualitative results}
+
+The prior study's qualitative figure is reproduced as
+Figure~\ref{fig:prior-recon}. Its annotations show the two metrics decoupling
+sharply: the third row is labelled \SI{32.97}{\decibel} PSNR with an SSIM of
+\num{0.5219}, while the first row is labelled \SI{35.20}{\decibel} with
+\num{0.7218}. Both rows are fat-suppressed acquisitions of the same anatomy, yet
+a \SI{2.2}{\decibel} PSNR difference is accompanied by a \num{0.20} SSIM
+difference---a far steeper coupling than these metrics usually exhibit.
+
+I record this as an anomaly rather than as a diagnosis. A per-image
+normalisation error is one candidate explanation, and the fixed data range
+documented above is a known defect in the code that produced it; but the third
+row also visibly contains more high-frequency texture and stronger residual
+streaking than the first, which could account for some of the SSIM gap on its
+own. The two cannot be separated without the original weights, and those were
+never released.
+
+That impossibility is the substantive point. A qualitative figure annotated with
+metrics that cannot be recomputed, produced by code that cannot be run, is not
+evidence for a claim---it is an illustration. This is why the present system
+records a git commit, a dirty-tree flag and the full resolved configuration
+alongside every number it produces.
+
+Independently of the metrics, the reconstructions do show the over-smoothing
+characteristic of a network trained on a pixel-domain loss without a physics
+constraint: the trabecular texture visible in the fourth row's reference is
+largely absent from its prediction.
+
+\begin{figure}[p]
+\centering
+\includegraphics[width=0.88\textwidth]{figures/recon_grid_prior.jpg}
+\caption{Qualitative reconstructions from the prior study: zero-filled input
+(left), prediction (centre), fully sampled reference (right). Reproduced as
+audit evidence, not as results of the present system. The annotated metrics use
+the superseded definitions of Section~\ref{sec:audit} --- a fixed data range of
+\num{1.0} and a batch-averaged PSNR --- and cannot be recomputed, since the
+weights that produced them were never released and the released code cannot
+construct the architecture.}
+\label{fig:prior-recon}
+\end{figure}
 
 \subsection{Implications}
 
@@ -468,6 +548,26 @@ readout.
 The pipeline also runs on synthetic phantoms produced by a generator released
 with the code (Section~\ref{sec:artifact}), which is what the ablation in
 Section~\ref{sec:ablation} uses.
+
+Figure~\ref{fig:knee} shows the two contrasts and the degradation the task must
+undo. That degradation is not additive noise: it is coherent, structured, and
+aligned with the phase-encode direction, which is why it is so effective at
+obscuring the thin bright structures---cartilage surfaces, the meniscus---that
+carry diagnostic information.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.62\textwidth]{figures/knee_examples.jpg}
+\caption{Coronal knee slices from the fastMRI single-coil dataset, reproduced
+from the prior study. The panels show zero-filled reconstructions exhibiting the
+blurring and coherent streaking characteristic of retrospective undersampling,
+alongside a fully sampled example (bottom right) in a different contrast:
+proton-density weighted without fat suppression, versus the fat-suppressed
+acquisitions elsewhere in the figure. Both contrasts appear in the dataset, and
+they differ enough in texture and noise that reporting a single averaged metric
+across them hides genuine variation in difficulty.}
+\label{fig:knee}
+\end{figure}
 
 \subsection{Preprocessing order}
 
