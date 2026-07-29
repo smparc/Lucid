@@ -48,6 +48,10 @@ def main() -> int:
     stats_psnr = json.loads((root / "stats_psnr.json").read_text())
     stats_ssim = json.loads((root / "stats_ssim.json").read_text())
 
+    per_sample = {}
+    ps_path = root / "per_sample.json"
+    if ps_path.exists():
+        per_sample = json.loads(ps_path.read_text())
     intervals = stats_psnr.get("intervals", {})
     comps_psnr = stats_psnr.get("comparisons", {})
     comps_ssim = stats_ssim.get("comparisons", {})
@@ -159,6 +163,66 @@ def main() -> int:
     add("\\label{tab:ablation-stats}")
     add("\\end{table}")
     add("")
+
+    # ── Capacity-matched contrast: the paper's central claim ──────────────
+    # Deltas against the magnitude baseline do not test the claim. The claim is
+    # that data consistency beats an equal-parameter single-pass network, so
+    # that pair has to be tested directly.
+    pairs = [
+        ("unet-dc2", "unet-wide", "U-Net"),
+        ("swin-dc2", "swin-wide", "SwinUNet"),
+    ]
+    available = [(d, w, fam) for d, w, fam in pairs if d in per_sample and w in per_sample]
+
+    if available:
+        from training.stats import paired_permutation_test
+
+        add(
+            "The comparison that actually tests the hypothesis is each cascade "
+            "against its own capacity-matched control, reported in "
+            "Table~\\ref{tab:ablation-dc}. Deltas against the magnitude-only "
+            "baseline conflate three effects at once; this pair isolates the "
+            "data-consistency constraint with parameter count held fixed (in "
+            "fact slightly favouring the control)."
+        )
+        add("")
+        add("\\begin{table}[h]")
+        add("\\centering")
+        add("\\small")
+        add("\\begin{tabular}{@{}lccccc@{}}")
+        add("\\toprule")
+        add(
+            "Backbone & Cascade & Control & $\\Delta$PSNR (dB) & 95\\% CI & $p$ \\\\"
+        )
+        add("\\midrule")
+
+        for dc_key, ctrl_key, family in available:
+            test = paired_permutation_test(
+                per_sample[dc_key][metric], per_sample[ctrl_key][metric]
+            )
+            dc_mean = results[dc_key]["psnr_db"]
+            ctrl_mean = results[ctrl_key]["psnr_db"]
+            p = test["p_value"]
+            p_str = f"$<10^{{-4}}$" if p < 1e-4 else f"{p:.4f}"
+            star = "$^{*}$" if p < 0.05 else ""
+            ci = f"[{test['diff_ci_low']:+.2f}, {test['diff_ci_high']:+.2f}]"
+            add(
+                f"{family} & {dc_mean:.2f} & {ctrl_mean:.2f} & "
+                f"{test['mean_diff']:+.2f} & {ci} & {p_str}{star} \\\\"
+            )
+
+        add("\\bottomrule")
+        add("\\end{tabular}")
+        add(
+            "\\caption{Data consistency against a capacity-matched single-pass "
+            "control, per backbone. Both members of each pair are complex-valued "
+            "and differ only in whether the measured $k$-space is projected back "
+            "after each refinement. Paired permutation test on per-slice "
+            "differences; $^{*}$ significant at $\\alpha = 0.05$.}"
+        )
+        add("\\label{tab:ablation-dc}")
+        add("\\end{table}")
+        add("")
 
     # ── Seed stability ────────────────────────────────────────────────────
     seeded = [(k, results[k]) for k, _, _ in LABELS if results.get(k, {}).get("seed_psnr")]
