@@ -476,7 +476,7 @@ class TestConfig:
 
     def test_missing_key_gives_a_helpful_error(self):
         with pytest.raises(AttributeError, match="Available"):
-            Config({"a": 1}).nonexistent
+            Config({"a": 1}).nonexistent  # noqa: B018
 
     def test_to_dict_is_plain(self):
         plain = load_config().to_dict()

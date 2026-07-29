@@ -728,7 +728,7 @@ class SwinUNet(nn.Module):
         x = self.patch_embed(x)  # (B, H', W', C)
 
         skips = []
-        for stage, down in zip(self.encoder_stages, self.downsamples):
+        for stage, down in zip(self.encoder_stages, self.downsamples, strict=True):
             x = stage(x)
             skips.append(x)
             x = down(x)

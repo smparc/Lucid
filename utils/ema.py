@@ -220,7 +220,10 @@ class EMAModel:
                 n for n, p in self.model.named_parameters() if p.requires_grad
             ]
             params = state.get("shadow_params") or []
-            shadow = dict(zip(names, params))
+            # Lengths may legitimately differ for a partially saved legacy
+            # checkpoint; zip stops at the shorter one and the missing
+            # tensors are reported by the check below.
+            shadow = dict(zip(names, params, strict=False))
 
         self.shadow = {k: v.clone() for k, v in shadow.items()}
         self.step_count = int(state.get("step_count", 0))
@@ -280,7 +283,7 @@ def load_ema_weights_into(model: nn.Module, ema_state: dict | None) -> bool:
             )
             return False
         with torch.no_grad():
-            for param, value in zip(trainable, params):
+            for param, value in zip(trainable, params, strict=True):
                 param.copy_(value.to(param.device))
         log.info("Applied %d EMA tensors positionally", len(params))
         return True

@@ -332,7 +332,7 @@ def plot_training_history(history_path: str | Path, save_path: str | None = None
     panels = [p for p in panels if any(s is not None for s, _ in p[1])]
 
     fig, axes = plt.subplots(1, len(panels), figsize=(4.5 * len(panels), 4), squeeze=False)
-    for ax, (title, series_list, style) in zip(axes[0], panels):
+    for ax, (title, series_list, style) in zip(axes[0], panels, strict=True):
         for values, label in series_list:
             if values:
                 ax.plot(epochs[: len(values)], values, label=label, linewidth=1.6)

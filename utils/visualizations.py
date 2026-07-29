@@ -150,7 +150,7 @@ def plot_training_curves(
 
     def series(*names: str):
         for name in names:
-            if name in history and history[name]:
+            if history.get(name):
                 return history[name]
         return None
 
