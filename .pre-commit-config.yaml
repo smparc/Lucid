@@ -1,3 +1,6 @@
+# Run once after cloning:  pre-commit install
+# Run over everything:     pre-commit run --all-files
+
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.5.0
@@ -5,14 +8,37 @@ repos:
       - id: trailing-whitespace
       - id: end-of-file-fixer
       - id: check-yaml
-      - id: check-added-large-files
-        args: ["--maxkb=5000"]
+      - id: check-toml
+      - id: check-json
       - id: check-merge-conflict
-
+      - id: check-case-conflict
+      - id: debug-statements
+      # Model checkpoints and fastMRI volumes must never be committed.
+      - id: check-added-large-files
+        args: ["--maxkb=2000"]
+      - id: mixed-line-ending
+        args: ["--fix=lf"]
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.1.9
     hooks:
       - id: ruff
-        args: [--fix]
-      - id: ruff-format
+        args: [--fix, --exit-non-zero-on-fix]
+
+  - repo: local
+    hooks:
+      # Architecture construction is exactly the class of failure that shipped
+      # unnoticed before, so it is checked on every commit that touches a model.
+      - id: model-sanity
+        name: architecture sanity check
+        entry: python main.py test_models --size 64
+        language: system
+        pass_filenames: false
+        files: ^(models/|config\.py|main\.py)
+
+      - id: pytest
+        name: pytest
+        entry: pytest tests/ -q -x --no-header -p no:cacheprovider
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
