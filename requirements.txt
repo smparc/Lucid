@@ -1,43 +1,29 @@
-# Core ML
+# Runtime dependencies for Lucid.
+#
+# This file installs everything needed to train, evaluate and export. For a
+# minimal set, `pip install -e .` installs only the core; the extras below are
+# declared in pyproject.toml and can be installed selectively, e.g.
+#   pip install -e ".[tracking,export]"
+#
+# Development tools (pytest, ruff, pre-commit) are NOT listed here -- they live
+# in the `dev` extra, so a production image does not carry a test runner.
+# Install them with:  pip install -e ".[dev]"
+
+# -- Core ---------------------------------------------------------------------
 torch>=2.0
-torchvision>=0.15
 numpy>=1.24
-
-
-# Data
 h5py>=3.8
-
-
-# Visualization
+pyyaml>=6.0
+tqdm>=4.65
 matplotlib>=3.7
 
-
-# Metrics
-scikit-image>=0.21
-
-
-# Training utilities
-tqdm>=4.65
-pyyaml>=6.0
-
-
-# Experiment tracking
+# -- Experiment tracking ------------------------------------------------------
 tensorboard>=2.14
 wandb>=0.15
 
-
-# Export / deployment
+# -- Deployment / export ------------------------------------------------------
 onnx>=1.14
 onnxruntime>=1.16
 
-
-# Development
-pytest>=7.4
-pytest-cov>=4.1
-ruff>=0.1.0
-pre-commit>=3.5
-
-
-# Notebooks
-jupyter>=1.0
-ipywidgets>=8.0
+# -- Optional: VGG perceptual loss (training.loss.perceptual_weight > 0) ------
+torchvision>=0.15

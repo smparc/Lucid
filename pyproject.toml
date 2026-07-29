@@ -2,77 +2,128 @@
 requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
-
 [project]
 name = "lucid-mri"
-version = "1.0.0"
-description = "Accelerated MRI Reconstruction using SwinUNet"
+version = "2.0.0"
+description = "Accelerated MRI reconstruction with physics-informed Swin Transformers"
 readme = "README.md"
 requires-python = ">=3.10"
-license = {text = "MIT"}
-authors = [{name = "Lucid Team"}]
-keywords = ["mri", "reconstruction", "deep-learning", "swin-transformer", "medical-imaging"]
+license = { text = "MIT" }
+authors = [{ name = "Matthew Park" }]
+keywords = [
+    "mri",
+    "reconstruction",
+    "deep-learning",
+    "swin-transformer",
+    "medical-imaging",
+    "data-consistency",
+    "inverse-problems",
+]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
     "Topic :: Scientific/Engineering :: Medical Science Apps.",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
 ]
 
-
+# Runtime dependencies only. Development and notebook extras live below, so a
+# deployment image does not pull pytest, ruff and Jupyter.
 dependencies = [
     "torch>=2.0",
-    "torchvision>=0.15",
     "numpy>=1.24",
     "h5py>=3.8",
     "matplotlib>=3.7",
-    "scikit-image>=0.21",
     "tqdm>=4.65",
     "pyyaml>=6.0",
-    "tensorboard>=2.14",
-    "wandb>=0.15",
-    "onnx>=1.14",
-    "onnxruntime>=1.16",
 ]
 
-
 [project.optional-dependencies]
+# torchvision is only needed for the VGG perceptual loss, which is off by default.
+perceptual = ["torchvision>=0.15"]
+tracking = ["tensorboard>=2.14", "wandb>=0.15"]
+export = ["onnx>=1.14", "onnxruntime>=1.16"]
 dev = [
     "pytest>=7.4",
     "pytest-cov>=4.1",
     "ruff>=0.1.0",
     "pre-commit>=3.5",
 ]
-jupyter = [
-    "jupyter>=1.0",
-    "ipywidgets>=8.0",
+jupyter = ["jupyter>=1.0", "ipywidgets>=8.0", "seaborn>=0.13"]
+all = [
+    "lucid-mri[perceptual,tracking,export,dev,jupyter]",
 ]
 
+[project.urls]
+Repository = "https://github.com/lucid-mri/lucid"
 
 [project.scripts]
 lucid = "main:main"
 
+[tool.setuptools]
+py-modules = ["main", "config", "inference"]
 
 [tool.setuptools.packages.find]
 include = ["models*", "training*", "data*", "utils*"]
 
-
-[tool.setuptools.py-modules]
-include = ["main", "config", "inference"]
-
-
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-v --tb=short"
-
+addopts = "-v --tb=short --strict-markers"
+# Tests import top-level packages; this makes that work from any directory.
+pythonpath = ["."]
+filterwarnings = [
+    "error::DeprecationWarning",
+    # Benign: the scheduler tests drive a schedule without a real training step.
+    "ignore:Detected call of .lr_scheduler.step.*:UserWarning",
+    "ignore::DeprecationWarning:torch.*",
+    "ignore::DeprecationWarning:jupyter_client.*",
+]
+markers = ["slow: long-running tests, deselect with '-m \"not slow\"'"]
 
 [tool.ruff]
 line-length = 100
 target-version = "py310"
-
+exclude = [".venv", "venv", "build", "dist", "notebooks"]
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "N", "UP"]
-ignore = ["E501"]
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes
+    "W",    # pycodestyle warnings
+    "I",    # import sorting
+    "N",    # pep8 naming
+    "UP",   # pyupgrade
+    "B",    # bugbear
+    "C4",   # comprehensions
+    "SIM",  # simplify
+    "RUF",  # ruff-specific
+]
+ignore = [
+    "E501",   # line length is handled by the formatter
+    "N803",   # argument names like H, W are the standard in this domain
+    "N806",   # ditto for locals: B, C, H, W
+    "B008",   # function calls in argument defaults (used by torch idioms)
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests deliberately access private helpers and re-import inside functions.
+"tests/*" = ["N802", "SIM117"]
+"__init__.py" = ["F401"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["models", "data", "training", "utils", "config", "inference"]
+
+[tool.coverage.run]
+source = ["models", "data", "training", "utils"]
+omit = ["*/tests/*", "*/__init__.py"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+]

@@ -1,30 +1,47 @@
-name: CI
+# =============================================================================
+# CI for Lucid.
+#
+# Note on location: this file previously lived at `.github/.workflows/ci.yml`.
+# GitHub only reads `.github/workflows/`, so the leading dot meant the workflow
+# had never run -- which is why a codebase whose flagship model could not be
+# constructed still looked green.
+# =============================================================================
 
+name: CI
 
 on:
   push:
     branches: [main, develop]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
 
 jobs:
   lint:
+    name: Lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install ruff
-        run: pip install ruff
-      - name: Lint
+          cache: pip
+      - run: pip install ruff
+      - name: Ruff check
         run: ruff check . --output-format=github
 
-
   test:
+    name: Tests (py${{ matrix.python-version }})
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         python-version: ["3.10", "3.11", "3.12"]
     steps:
@@ -32,36 +49,78 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Cache pip
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            pyproject.toml
       - name: Install dependencies
         run: |
-          pip install --upgrade pip
-          pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
-          pip install -r requirements.txt
+          python -m pip install --upgrade pip
+          # CPU wheels only: CI has no GPU and the CUDA build is ~2 GB.
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install numpy h5py pyyaml tqdm matplotlib
           pip install pytest pytest-cov
       - name: Run tests
-        run: pytest tests/ -v --cov=models --cov=data --cov=training --cov-report=xml
+        run: pytest tests/ -q --cov --cov-report=xml --cov-report=term
       - name: Upload coverage
         if: matrix.python-version == '3.11'
         uses: codecov/codecov-action@v4
         with:
-          file: coverage.xml
-
+          files: coverage.xml
+          fail_ci_if_error: false
 
   model-sanity:
+    name: Architecture sanity
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
       - name: Install dependencies
         run: |
-          pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
-          pip install -r requirements.txt
-      - name: Architecture sanity check
-        run: python main.py test_models
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install numpy h5py pyyaml tqdm matplotlib
+      # This step relies on main.py returning a non-zero exit code on failure.
+      # The previous version caught every exception and exited 0, so the job
+      # passed even when no architecture could be built.
+      - name: Forward pass through every architecture
+        run: python main.py test_models --size 128
+
+  smoke-train:
+    name: End-to-end training smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install numpy h5py pyyaml tqdm matplotlib
+      - name: Generate synthetic fastMRI volumes
+        run: python scripts/make_synthetic_data.py --out /tmp/fastmri --volumes 3
+      # Exercises the whole path: undersampling, complex I/O, the unrolled
+      # data-consistency cascade, AMP, EMA, checkpointing and metrics.
+      - name: Train two epochs
+        run: |
+          python main.py train --config configs/smoke.yaml \
+            data.train_dir=/tmp/fastmri \
+            data.val_dir=null \
+            logging.output_dir=/tmp/outputs
+      - name: Verify run artifacts
+        run: |
+          test -f /tmp/outputs/smoke/history.json
+          test -f /tmp/outputs/smoke/manifest.json
+          test -f /tmp/outputs/smoke/summary.json
+          test -f /tmp/outputs/smoke/checkpoints/best.pt
+      - name: Evaluate the trained checkpoint
+        run: |
+          python main.py eval \
+            --ckpt /tmp/outputs/smoke/checkpoints/best.pt \
+            --data_dir /tmp/fastmri \
+            --output_dir /tmp/results \
+            --n_vis 2

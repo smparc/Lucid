@@ -125,7 +125,7 @@ class TestDataConsistency:
         """
         for requested in (0.5, 0.9, 1.0):
             dc = DataConsistencyLayer(learnable_lambda=True, lambda_init=requested)
-            assert abs(float(dc.lam) - requested) < 1e-3
+            assert abs(float(dc.lam.detach()) - requested) < 1e-3
 
     def test_unmeasured_frequencies_come_from_the_network(self):
         truth, k_meas, mask = self._setup()
