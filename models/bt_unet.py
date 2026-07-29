@@ -56,7 +56,7 @@ class PositionalEncoding2D(nn.Module):
     def forward(self, x: torch.Tensor, H: int, W: int) -> torch.Tensor:
         """``x`` : ``(B, H*W, D)`` -> same, with position added."""
         pe = self.pe
-        if (H, W) != (self.grid_size, self.grid_size):
+        if (self.grid_size, self.grid_size) != (H, W):
             pe = F.interpolate(pe, size=(H, W), mode="bicubic", align_corners=False)
         pe = pe.flatten(2).transpose(1, 2)  # (1, H*W, D)
         return x + pe

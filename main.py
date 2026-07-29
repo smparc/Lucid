@@ -35,7 +35,7 @@ import torch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from config import ConfigError, load_config  # noqa: E402
+from config import ConfigError, load_config
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("lucid")
@@ -55,9 +55,9 @@ BANNER = r"""
 
 def cmd_test_models(args: argparse.Namespace) -> int:
     """Forward-pass every architecture and verify output shapes."""
+    from models.data_consistency import CascadedNet
     from models.layers import count_parameters
     from models.registry import available_models, build_backbone
-    from models.data_consistency import CascadedNet
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     size = args.size
@@ -110,7 +110,7 @@ def cmd_test_models(args: argparse.Namespace) -> int:
                 raise AssertionError("output contains NaN or Inf")
 
             print(
-                f"  {name:<28}{n_params / 1e6:>12.2f}{str(tuple(out.shape)):>20}  OK"
+                f"  {name:<28}{n_params / 1e6:>12.2f}{tuple(out.shape)!s:>20}  OK"
             )
         except Exception as exc:
             failures.append((name, exc))

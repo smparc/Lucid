@@ -31,20 +31,20 @@ from typing import Any
 import matplotlib
 
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt  # noqa: E402
-import numpy as np  # noqa: E402
-import torch  # noqa: E402
-from torch.utils.data import DataLoader  # noqa: E402
+import matplotlib.pyplot as plt
+import numpy as np
+import torch
+from torch.utils.data import DataLoader
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from config import Config, load_config  # noqa: E402
-from data.preprocessing import FastMRIKneeDataset, collate  # noqa: E402
-from models.registry import build_model, forward_model  # noqa: E402
-from training.losses import CombinedLoss  # noqa: E402
-from training.metrics import MetricAccumulator  # noqa: E402
-from training.stats import compare_models, format_comparison_table  # noqa: E402
-from utils.ema import load_ema_weights_into  # noqa: E402
+from config import Config, load_config
+from data.preprocessing import FastMRIKneeDataset, collate
+from models.registry import build_model, forward_model
+from training.losses import CombinedLoss
+from training.metrics import MetricAccumulator
+from training.stats import compare_models, format_comparison_table
+from utils.ema import load_ema_weights_into
 
 log = logging.getLogger(__name__)
 
@@ -312,7 +312,7 @@ def plot_training_history(history_path: str | Path, save_path: str | None = None
 
     def series(*names: str) -> list[float] | None:
         for name in names:
-            if name in hist and hist[name]:
+            if hist.get(name):
                 return hist[name]
         return None
 

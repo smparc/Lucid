@@ -105,7 +105,10 @@ ignore = [
     "E501",   # line length is handled by the formatter
     "N803",   # argument names like H, W are the standard in this domain
     "N806",   # ditto for locals: B, C, H, W
+    "N812",   # `import torch.nn.functional as F` is the universal PyTorch idiom
     "B008",   # function calls in argument defaults (used by torch idioms)
+    "C408",   # dict(...) is used deliberately for readable keyword bundles
+    "RUF059", # `B, C, H, W = x.shape` is idiomatic even when a name is unused
 ]
 
 [tool.ruff.lint.per-file-ignores]

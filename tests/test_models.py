@@ -23,7 +23,6 @@ from models.swinunet import (
 )
 from models.unet import NormUNet, UNet
 
-
 # ---------------------------------------------------------------------------
 # Regression tests for previously fatal defects
 # ---------------------------------------------------------------------------

@@ -33,7 +33,7 @@ out at ``N / R``, which is what fastMRI's own ``EquispacedMaskFunc`` does.
 
 from __future__ import annotations
 
-from typing import Sequence
+from collections.abc import Sequence
 
 import numpy as np
 import torch

@@ -34,7 +34,6 @@ from models.fourier import (
 )
 from models.registry import build_backbone
 
-
 # ---------------------------------------------------------------------------
 # Fourier transforms
 # ---------------------------------------------------------------------------

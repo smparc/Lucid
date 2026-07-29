@@ -38,7 +38,6 @@ from dataclasses import dataclass, field
 import torch
 import torch.nn.functional as F
 
-
 # ---------------------------------------------------------------------------
 # Kernel
 # ---------------------------------------------------------------------------

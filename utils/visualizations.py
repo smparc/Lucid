@@ -13,14 +13,13 @@ Features:
 """
 
 
+from pathlib import Path
+
+import matplotlib.gridspec as gridspec
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn.functional as F
-import matplotlib.pyplot as plt
-import matplotlib.gridspec as gridspec
-from typing import Optional, List
-from pathlib import Path
-
 
 
 def plot_reconstruction_comparison(
@@ -290,7 +289,7 @@ class AttentionExtractor:
 
 
     def __init__(self, model: torch.nn.Module):
-        self.attention_maps: List[torch.Tensor] = []
+        self.attention_maps: list[torch.Tensor] = []
         self.hooks = []
         self._register_hooks(model)
 
@@ -299,11 +298,7 @@ class AttentionExtractor:
         """Register forward hooks on all attention softmax outputs."""
         for name, module in model.named_modules():
             # Match common attention patterns in Swin/ViT
-            if "attn" in name.lower() and hasattr(module, "softmax"):
-                hook = module.register_forward_hook(self._hook_fn)
-                self.hooks.append(hook)
-            # Also match nn.MultiheadAttention or custom WindowAttention
-            elif module.__class__.__name__ in ("WindowAttention", "MultiheadAttention"):
+            if ("attn" in name.lower() and hasattr(module, "softmax")) or module.__class__.__name__ in ("WindowAttention", "MultiheadAttention"):
                 hook = module.register_forward_hook(self._hook_fn)
                 self.hooks.append(hook)
 
@@ -320,7 +315,7 @@ class AttentionExtractor:
             self.attention_maps.append(module._attention_weights.detach().cpu())
 
 
-    def get_attention_maps(self) -> List[torch.Tensor]:
+    def get_attention_maps(self) -> list[torch.Tensor]:
         """Return collected attention maps and clear buffer."""
         maps = self.attention_maps.copy()
         self.attention_maps.clear()
@@ -337,9 +332,9 @@ class AttentionExtractor:
 
 def plot_attention_maps(
     input_img: np.ndarray,
-    attention_maps: List[torch.Tensor],
-    layer_indices: Optional[List[int]] = None,
-    head_indices: Optional[List[int]] = None,
+    attention_maps: list[torch.Tensor],
+    layer_indices: list[int] | None = None,
+    head_indices: list[int] | None = None,
     save_path: str = None,
     max_display: int = 8,
 ):
@@ -454,7 +449,7 @@ def plot_attention_maps(
 
 def plot_attention_rollout(
     input_img: np.ndarray,
-    attention_maps: List[torch.Tensor],
+    attention_maps: list[torch.Tensor],
     save_path: str = None,
     discard_ratio: float = 0.9,
 ):

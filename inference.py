@@ -79,7 +79,7 @@ class MRIReconstructionPipeline:
         model_name: str | None = None,
         device: torch.device | None = None,
         use_ema: bool = True,
-    ) -> "MRIReconstructionPipeline":
+    ) -> MRIReconstructionPipeline:
         """
         Load a pipeline from a training checkpoint.
 
