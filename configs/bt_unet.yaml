@@ -1,29 +1,37 @@
-# ─────────────────────────────────────────────────────────────────────────────
-# BT-UNet (Transformer at Bottleneck) config
-# ─────────────────────────────────────────────────────────────────────────────
-
+# =============================================================================
+# BT-UNet: U-Net with a Transformer encoder at the bottleneck.
+#
+# The bottleneck is 320 / 2^4 = 20 x 20 = 400 tokens at 512 channels, so global
+# attention is affordable there. Positional embeddings are interpolated to the
+# incoming grid, so this config is not locked to 320x320 inputs.
+# =============================================================================
 
 model:
   name: bt_unet
+  complex: false
   params:
-    in_channels: 1
-    out_channels: 1
     base_ch: 32
     n_levels: 4
     tf_heads: 8
     tf_layers: 4
     tf_dropout: 0.1
-
+    img_size: 320
+    norm: instance
+    residual: true
 
 training:
   epochs: 50
   batch_size: 6
   lr: 8.0e-5
   weight_decay: 1.0e-4
+  optimizer: adamw
+  scheduler: warmup_cosine
+  warmup_epochs: 5
   amp: true
   augmentation: true
   patience: 12
-
+  monitor: val_ssim
+  monitor_mode: max
 
 logging:
   experiment_name: bt_unet

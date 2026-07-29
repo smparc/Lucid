@@ -1,0 +1,57 @@
+# =============================================================================
+# Tiny end-to-end smoke test: a few minutes on CPU.
+#
+# Exercises the entire training path -- dataset, undersampling, model, loss,
+# AMP, EMA, scheduler, checkpointing, metrics, history -- at a size where a
+# broken pipeline fails in seconds instead of at hour three of a real run.
+#
+#   python main.py train --config configs/smoke.yaml data.train_dir=<dir>
+# =============================================================================
+
+model:
+  name: swinunet
+  complex: true
+  params:
+    img_size: 64
+    patch_size: 2
+    embed_dim: 16
+    ws: 4
+    head_dim: 8
+    n_levels: 2
+    depths: [1, 1, 1]
+    drop_path_rate: 0.0
+    residual: true
+  data_consistency:
+    enabled: true
+    mode: cascade
+    n_cascades: 2
+
+data:
+  crop_size: [64, 64]
+  acceleration: 4
+  num_workers: 0
+  pin_memory: false
+  persistent_workers: false
+  undersample_domain: cropped
+  slice_mode: all
+
+training:
+  epochs: 2
+  batch_size: 2
+  lr: 1.0e-3
+  warmup_epochs: 1
+  amp: false
+  patience: 5
+  val_split: 0.3
+  ema:
+    enabled: true
+    warmup_steps: 2
+  monitor: val_ssim
+  monitor_mode: max
+
+logging:
+  experiment_name: smoke
+  tensorboard: false
+  wandb: false
+  log_interval: 1
+  save_top_k: 1
