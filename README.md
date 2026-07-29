@@ -175,7 +175,7 @@ Additions: unrolled DC cascade, complex I/O, per-image metrics with NMSE,
 bootstrap CIs and paired permutation tests, DropPath, truncated-normal init,
 fused attention, gradient checkpointing, multi-acceleration training, TTA,
 MC-dropout uncertainty, config validation, a synthetic data generator, run
-manifests with git SHA, and 212 tests.
+manifests with git SHA, a model card, and 217 tests.
 
 ---
 
@@ -222,8 +222,10 @@ manifests with git SHA, and 212 tests.
 │   ├── reproducibility.py    # Seeding, worker seeding, run manifest
 │   └── visualizations.py     # Figures and attention maps
 │
+├── MODEL_CARD.md              # Intended use, factors, limitations
+├── paper/                     # LaTeX source and built PDF of the write-up
 ├── scripts/make_synthetic_data.py
-└── tests/                    # 212 tests, ~6 s
+└── tests/                    # 217 tests, ~13 s
 ```
 
 ---
@@ -295,7 +297,7 @@ produces a *different* model is more dangerous than one that fails outright.
 ## Testing
 
 ```bash
-pytest tests/ -q                    # 212 tests, ~6 s
+pytest tests/ -q                    # 217 tests, ~13 s
 pytest tests/ --cov --cov-report=term
 pytest tests/test_physics.py -v     # Fourier and data-consistency exactness
 ```

@@ -48,7 +48,8 @@ comfort. Accelerated MRI addresses this by undersampling $k$-space and
 reconstructing the missing information computationally. In earlier work I
 proposed a hybrid U-Net/Swin Transformer architecture for this task and reported
 that the SwinUNet variant reached \SI{33.10}{\decibel} PSNR on the fastMRI
-single-coil knee benchmark, roughly \SI{5}{\decibel} above a U-Net baseline.
+single-coil knee benchmark, above a U-Net baseline at
+\SI{28.03}{\decibel}.
 
 This paper reports a systematic audit of the released implementation and a
 substantially revised system. The audit found that the released code could not
@@ -78,7 +79,7 @@ significant under a paired test. I do not restate the previously reported
 fastMRI figures as validated results: they are not reproducible from the
 released artifact, and the corrections to the sampling and metric definitions
 mean that numbers produced under the old protocol are not comparable to numbers
-produced under the new one. The revised system, its 212-test suite, and a
+produced under the new one. The revised system, its 217-test suite, and a
 synthetic data generator that makes the full pipeline runnable without the
 fastMRI download are released so that the benchmark numbers can be regenerated
 under a protocol that is stated precisely and checked automatically.
@@ -112,11 +113,15 @@ progress measurable.
 
 My earlier study compared a baseline U-Net, a U-Net with a Transformer at the
 bottleneck (BT-UNet), and a SwinUNet, and reported that the SwinUNet reached
-\SI{33.10}{\decibel} PSNR and \num{0.7274} SSIM, roughly \SI{5}{\decibel} above
-the U-Net. Preparing that work for release, I audited the implementation against
-its own documentation. The audit did not find the small discrepancies one
-expects. It found that the artifact could not run at all, and that several
-components which appeared to be working were not.
+\SI{33.10}{\decibel} PSNR and \num{0.7274} SSIM, against \SI{28.03}{\decibel}
+and \num{0.6935} for the U-Net. That gap is \SI{5.07}{\decibel}, though the
+prose of that paper described it as ``approximately \SI{4}{\decibel}'' in three
+places---the first and mildest of the inconsistencies this audit uncovered.
+
+Preparing the work for release, I audited the implementation against its own
+documentation. The audit did not find the small discrepancies one expects. It
+found that the artifact could not run at all, and that several components which
+appeared to be working were not.
 
 The most consequential finding concerns the flagship model. With the documented
 configuration---\SI{320}{px} input, patch size $4$, three encoder stages, window
@@ -151,7 +156,7 @@ table, and exited with status~0.
 
 \begin{enumerate}[leftmargin=*]
   \item \textbf{A reproducibility audit} of the released implementation,
-        classifying 17 defects into those that prevent execution, those that
+        classifying 19 defects into those that prevent execution, those that
         run but silently disable a documented feature, and those that corrupt
         measurement. Each is characterised by mechanism and, where it affects
         reported numbers, quantified (Section~\ref{sec:audit}).
@@ -179,7 +184,7 @@ table, and exited with status~0.
         capacity-matched controls, isolating the contribution of complex-valued
         input and of the data-consistency cascade from that of parameter count
         (Section~\ref{sec:ablation}).
-  \item \textbf{A verifiable artifact}: 212 automated tests including exactness
+  \item \textbf{A verifiable artifact}: 217 automated tests including exactness
         assertions on the Fourier and data-consistency operators, schema
         validation that rejects invalid configurations before training starts,
         and a synthetic data generator that makes the entire pipeline runnable
@@ -791,7 +796,7 @@ Table~\ref{tab:cost} are measured from models that run.
 
 \subsection{Testing}
 
-The suite comprises 212 tests running in roughly six seconds on CPU, organised
+The suite comprises 217 tests running in roughly thirteen seconds on CPU, organised
 so that each previously shipped defect has a corresponding regression test.
 Notable coverage:
 
