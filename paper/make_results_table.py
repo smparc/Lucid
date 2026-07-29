@@ -197,13 +197,15 @@ def main() -> int:
         add("\\midrule")
 
         for dc_key, ctrl_key, family in available:
+            # PSNR throughout this table; the aggregate means it is compared
+            # against are `psnr_db`, so mixing metrics here would be incoherent.
             test = paired_permutation_test(
-                per_sample[dc_key][metric], per_sample[ctrl_key][metric]
+                per_sample[dc_key]["psnr"], per_sample[ctrl_key]["psnr"]
             )
             dc_mean = results[dc_key]["psnr_db"]
             ctrl_mean = results[ctrl_key]["psnr_db"]
             p = test["p_value"]
-            p_str = f"$<10^{{-4}}$" if p < 1e-4 else f"{p:.4f}"
+            p_str = "$<10^{-4}$" if p < 1e-4 else f"{p:.4f}"
             star = "$^{*}$" if p < 0.05 else ""
             ci = f"[{test['diff_ci_low']:+.2f}, {test['diff_ci_high']:+.2f}]"
             add(
