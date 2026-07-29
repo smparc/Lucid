@@ -162,8 +162,19 @@ def magic_mask(
         generator = rng if rng is not None else np.random.default_rng(seed)
         phi = (1 + 5**0.5) / 2  # golden ratio
         offset = float(generator.uniform())
-        idx = np.floor(((np.arange(outer_budget) * phi + offset) % 1.0) * num_cols)
-        mask[idx.astype(int).clip(0, num_cols - 1)] = 1.0
+        centre = set(range(start, start + num_low_freqs))
+        # Successive golden-angle indices collide, both with each other and with
+        # the centre block, so drawing exactly `outer_budget` of them acquires
+        # fewer unique lines than intended and inflates the true acceleration.
+        # Walk the sequence until the budget of *distinct new* lines is met.
+        chosen: set[int] = set()
+        for i in range(outer_budget * 8):
+            if len(chosen) >= outer_budget:
+                break
+            col = int(((i * phi + offset) % 1.0) * num_cols) % num_cols
+            if col not in centre:
+                chosen.add(col)
+        mask[list(chosen)] = 1.0
 
     mask[start : start + num_low_freqs] = 1.0
     return torch.from_numpy(mask.reshape(1, num_cols))
