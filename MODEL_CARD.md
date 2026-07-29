@@ -117,8 +117,8 @@ No benchmark results are published with this card. The previously reported
 figures for this project are not reproducible from the released code, and
 corrections to the sampling mask and metric definitions mean results produced
 under the old protocol are not comparable to results produced under the current
-one. `paper/paper.pdf` documents the audit; Section 7 of that paper gives the
-commands to regenerate benchmark numbers.
+one. `paper/paper.pdf` documents the audit; its "Running without fastMRI"
+section gives the commands to regenerate benchmark numbers.
 
 ## References
 

@@ -94,6 +94,12 @@ python main.py compare --ckpt_dir outputs --metric psnr --reference unet_baselin
 permutation tests, so the output states whether a difference is resolvable
 rather than only which number is larger.
 
+The full write-up — the audit of the previous implementation, the corrected
+methodology, and a controlled ablation isolating the data-consistency
+contribution — is in [`paper/paper.pdf`](paper/paper.pdf) (LaTeX source
+alongside it; rebuild with `paper/build.sh`). Intended use, factors and
+limitations are documented in [`MODEL_CARD.md`](MODEL_CARD.md).
+
 ---
 
 ## Architecture
