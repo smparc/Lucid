@@ -72,10 +72,16 @@ $8.3\times10^{-7}$. Metrics are computed per image against each target's own
 dynamic range, and model comparisons report bootstrap confidence intervals and
 Holm-corrected paired permutation tests rather than point estimates.
 
-In a controlled ablation on synthetic phantom data with capacity-matched
-controls, the data-consistency cascade improves reconstruction over an
-equal-parameter single-pass network by a margin that is statistically
-significant under a paired test. I do not restate the previously reported
+In a controlled ablation on synthetic phantom data, the data-consistency
+cascade beats a capacity-matched single-pass network by \SI{2.40}{\decibel}
+on a U-Net backbone and \SI{2.16}{\decibel} on a SwinUNet backbone, both at
+$p < 10^{-4}$ under a paired permutation test and both with fewer parameters
+than the control. The near-equality of the two gains across architectures with
+very different inductive biases indicates the improvement comes from the
+physics constraint rather than the network. A secondary finding is that
+complex-valued input on its own \emph{costs} \SI{2.14}{\decibel}, because the
+magnitude loss leaves phase unsupervised --- which is precisely the freedom the
+data-consistency projection removes. I do not restate the previously reported
 fastMRI figures as validated results: they are not reproducible from the
 released artifact, and the corrections to the sampling and metric definitions
 mean that numbers produced under the old protocol are not comparable to numbers
@@ -899,7 +905,7 @@ function cannot reach.
 \paragraph{The SwinUNet arm is under-trained, and I report it as such.} The
 SwinUNet sits roughly \SI{6}{\decibel} below the U-Net at every rung of the
 ablation. This is a statement about the experiment's scale, not about the
-architecture. At \SI{0.21}{\mega\nothing} parameters it has less than half the
+architecture. At 0.21\,M parameters it has less than half the
 U-Net's capacity, and 240 synthetic training slices is far too little for a
 transformer trained from scratch with no pretraining---transformers lack the
 locality prior that lets a convolutional network learn from small datasets.
@@ -1015,12 +1021,26 @@ exact state that produced it.
 \subsection{Where the gain comes from}
 
 The ablation in Section~\ref{sec:ablation} separates three sources of
-improvement that are easily conflated: complex-valued input, additional
-parameters, and the data-consistency constraint. The capacity-matched controls
-matter because a cascade of $T$ stages has $T$ times the parameters of its
-backbone, and attributing its advantage to the physics without controlling for
-capacity would repeat, in a subtler form, the error this paper set out to
-correct.
+improvement that are easily conflated, and they turn out to point in different
+directions. Complex-valued input alone costs \SI{2.14}{\decibel}. Doubling
+capacity returns \SI{0.46}{\decibel} of that. Data consistency returns the
+remainder and adds \SI{0.72}{\decibel} beyond the magnitude-only baseline.
+
+Reported only against that baseline, the cascade would have looked like a
+modest \SI{+0.72}{\decibel} improvement---and that framing would have concealed
+both that complex representation is a substantial handicap and that the physics
+constraint more than overcomes it. The capacity-matched control is what makes
+the \SI{2.40}{\decibel} attributable to data consistency rather than to
+parameters. A cascade of $T$ stages carries $T$ times the parameters of its
+backbone, so omitting that control would have repeated, in subtler form, the
+error this paper set out to correct.
+
+That the same constraint yields \SI{+2.40}{\decibel} on a convolutional
+backbone and \SI{+2.16}{\decibel} on a windowed-attention one is the result I
+would most want replicated. Two architectures with very different inductive
+biases should not respond so similarly to an architectural intervention; they
+should respond similarly to a constraint on the solution space, which is what
+data consistency is.
 
 \subsection{Why physics constraints matter clinically}
 
@@ -1089,9 +1109,19 @@ whose value depends on batch size.
 The rebuilt system corrects each of these and reorganises the method around the
 physics of the acquisition: complex-valued reconstruction through an unrolled
 cascade whose data-consistency projections restore the measured Fourier
-coefficients to $8.3\times10^{-7}$, verified automatically on every commit. In
-a controlled ablation with capacity-matched controls, that constraint improves
-reconstruction beyond what equivalent parameters alone provide.
+coefficients to $8.3\times10^{-7}$, verified automatically on every commit.
+
+In a controlled ablation against capacity-matched controls, that constraint is
+worth \SI{2.40}{\decibel} on a U-Net backbone and \SI{2.16}{\decibel} on a
+SwinUNet backbone---both at $p < 10^{-4}$, and both achieved with fewer
+parameters than the single-pass networks they beat. The near-equality of those
+two figures, across architectures whose inductive biases have almost nothing in
+common, is the clearest indication that what helps is the constraint on the
+solution space rather than the choice of network. A secondary and initially
+unwelcome finding is that complex-valued input on its own \emph{costs}
+\SI{2.14}{\decibel}: the magnitude loss leaves phase unsupervised, and the
+network must optimise through that degeneracy. Data consistency is the only
+component here that reaches phase, and it recovers the deficit and more.
 
 I deliberately do not restate the earlier benchmark figures as validated
 results. They are not reproducible from the released artifact, and the

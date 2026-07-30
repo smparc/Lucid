@@ -18,6 +18,10 @@ learned refinement. The network can only ever modify frequencies that were never
 acquired — the constraint that separates reconstruction from plausible-looking
 inpainting.
 
+In a capacity-matched ablation that constraint is worth **+2.40 dB** on a U-Net
+and **+2.16 dB** on a SwinUNet (both p < 10⁻⁴, both with *fewer* parameters than
+the controls they beat). See [Results](#results).
+
 ---
 
 ## Quick start
@@ -74,16 +78,68 @@ Every command returns a non-zero exit code on failure.
 
 ---
 
-## Reproducing results
+## Results
 
-This repository does not ship trained weights, and **no benchmark numbers are
-quoted here**. Earlier versions of this README carried a results table whose
-headline configuration could not be constructed at all (see below), so numbers
-now come only from runs you can reproduce.
+**No fastMRI benchmark numbers are quoted here.** Earlier versions of this
+README carried a results table whose headline configuration could not be
+constructed at all (see [What changed in v2](#what-changed-in-v2)), and the
+corrections to the sampling mask and metric definitions mean numbers from the
+old protocol aren't comparable to numbers from this one. No trained weights are
+shipped either.
 
-Run the suite yourself:
+What *is* reported is a controlled ablation on **synthetic phantoms** — 60
+training volumes, 20 held-out validation volumes split at the volume level,
+R=4, 30 epochs, 3 seeds, median-SSIM seed shown. Reproducible end to end
+without any download.
+
+### Data consistency vs a capacity-matched control
+
+| Backbone | Cascade | Control | ΔPSNR | 95% CI | p |
+|---|---|---|---|---|---|
+| U-Net | 36.95 dB | 34.54 dB | **+2.40** | [+2.16, +2.65] | <10⁻⁴ |
+| SwinUNet | 32.70 dB | 30.54 dB | **+2.16** | [+1.98, +2.35] | <10⁻⁴ |
+
+Both cascades have **fewer** parameters than the single-pass controls they beat
+(0.97 M vs 1.00 M; 0.42 M vs 0.46 M), so the gain isn't capacity. Two
+architectures with very different inductive biases responding within 0.24 dB of
+each other points at the constraint, not the network.
+
+### The full ladder
+
+| Configuration | Params | PSNR | SSIM |
+|---|---|---|---|
+| Zero-filled (no network) | — | 29.48 | 0.7563 |
+| U-Net, magnitude | 0.48 M | 36.23 | 0.9673 |
+| U-Net, complex | 0.48 M | 34.09 | 0.9284 |
+| U-Net, complex, wide | 1.00 M | 34.54 | 0.9400 |
+| **U-Net + DC cascade** | 0.97 M | **36.95** | 0.9441 |
+| SwinUNet, magnitude | 0.21 M | 29.86 | 0.8941 |
+| SwinUNet, complex, wide | 0.46 M | 30.54 | 0.9086 |
+| **SwinUNet + DC cascade** | 0.42 M | **32.70** | 0.9146 |
+
+Two things worth reading carefully:
+
+**Complex input on its own *costs* 2.14 dB** (36.23 → 34.09). The loss is
+computed on magnitude, so phase is unsupervised and the network optimises
+through a large null space. Extra capacity recovers only 0.46 dB of it. Data
+consistency recovers all of it and adds 0.72 dB beyond the magnitude baseline —
+it's the only component that reaches phase, because it operates in k-space
+where phase isn't optional.
+
+**The SwinUNet arm is under-trained.** It sits ~6 dB below the U-Net at every
+rung. That's a statement about 240 synthetic training slices and 0.21 M
+parameters, not about the architecture — transformers lack the locality prior
+that lets a CNN learn from small data. This ablation establishes the DC effect
+on both backbones and establishes *nothing* about their relative merits.
+
+### Reproducing
 
 ```bash
+# synthetic ablation (~2 h on CPU)
+python scripts/make_synthetic_data.py --out data/exp/train --volumes 60 --slices 4
+python scripts/make_synthetic_data.py --out data/exp/val   --volumes 20 --slices 4 --seed 999
+
+# fastMRI benchmark
 for cfg in unet bt_unet swinunet swinunet_dc; do
     python main.py train --config configs/$cfg.yaml
 done
@@ -94,11 +150,10 @@ python main.py compare --ckpt_dir outputs --metric psnr --reference unet_baselin
 permutation tests, so the output states whether a difference is resolvable
 rather than only which number is larger.
 
-The full write-up — the audit of the previous implementation, the corrected
-methodology, and a controlled ablation isolating the data-consistency
-contribution — is in [`paper/paper.pdf`](paper/paper.pdf) (LaTeX source
-alongside it; rebuild with `paper/build.sh`). Intended use, factors and
-limitations are documented in [`MODEL_CARD.md`](MODEL_CARD.md).
+The full write-up — the audit, the corrected methodology, and the ablation — is
+in [`paper/paper.pdf`](paper/paper.pdf) (24 pages; LaTeX source alongside,
+rebuild with `paper/build.sh`). Intended use, factors and limitations are in
+[`MODEL_CARD.md`](MODEL_CARD.md).
 
 ---
 
