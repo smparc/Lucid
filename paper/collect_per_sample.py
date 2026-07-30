@@ -63,6 +63,7 @@ def main() -> int:
     ap.add_argument("--data", required=True, help="Validation data directory")
     ap.add_argument("--crop", type=int, default=128)
     ap.add_argument("--seeds", type=int, nargs="+", default=[0, 1, 2])
+    ap.add_argument("--reference", default="unet-mag", help="Baseline for comparisons")
     args = ap.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -110,6 +111,20 @@ def main() -> int:
     out = Path(args.results) / "per_sample.json"
     out.write_text(json.dumps(per_sample, indent=2))
     print(f"\nWrote {out} ({len(per_sample)} configurations)")
+
+    # Regenerate the aggregate statistics as well. The runner writes these
+    # itself, but it prints the comparison table before saving them, so a
+    # failure in that print loses the files while leaving every checkpoint
+    # intact -- which is exactly what happened. Recomputing here makes the
+    # pipeline restartable from checkpoints alone.
+    from training.stats import compare_models
+
+    for metric in ("psnr", "ssim"):
+        stats = compare_models(per_sample, metric=metric, reference=args.reference)
+        path = Path(args.results) / f"stats_{metric}.json"
+        path.write_text(json.dumps(stats, indent=2, default=str))
+        print(f"Wrote {path}")
+
     return 0
 
 
