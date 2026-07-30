@@ -862,6 +862,52 @@ assertion detects it.
 
 \input{results_ablation}
 
+\subsubsection{Interpretation}
+
+Three findings, in order of how much they surprised me.
+
+\paragraph{Data consistency delivers, and the effect is
+architecture-independent.} Against a capacity-matched control the cascade gains
+\SI{+2.40}{\decibel} on the U-Net and \SI{+2.16}{\decibel} on the SwinUNet, both
+at $p < 10^{-4}$ and both with \emph{fewer} parameters than the control they
+beat. That two backbones with entirely different inductive biases---one
+convolutional, one windowed-attention---produce gains within
+\SI{0.24}{\decibel} of each other is the strongest evidence in this paper that
+the improvement comes from the physics constraint rather than from the network.
+
+\paragraph{Complex-valued input, on its own, is harmful.} Switching the U-Net
+from magnitude to complex input costs \SI{2.14}{\decibel}
+(\SI{36.23}{\decibel} to \SI{34.09}{\decibel}) at identical parameter count.
+Doubling capacity recovers only \SI{0.46}{\decibel} of that.
+
+I did not anticipate this, and the explanation is instructive. The loss is
+computed on magnitude, so phase is entirely unsupervised. A complex-valued
+network therefore optimises through a large null space: infinitely many complex
+outputs share the same magnitude, and nothing in the objective distinguishes
+them. The network must discover a phase convention on its own, and gradient
+descent through that degeneracy is simply harder than mapping magnitude to
+magnitude directly.
+
+This makes the data-consistency result more interesting rather than less. DC is
+the only component here that constrains phase, because it operates in $k$-space
+where phase is not optional. It does not merely recover the
+\SI{2.14}{\decibel} that complex representation costs---it recovers all of it
+and adds \SI{0.72}{\decibel} beyond the magnitude-only baseline. The
+constraint is doing real work, and it is doing it precisely where the loss
+function cannot reach.
+
+\paragraph{The SwinUNet arm is under-trained, and I report it as such.} The
+SwinUNet sits roughly \SI{6}{\decibel} below the U-Net at every rung of the
+ablation. This is a statement about the experiment's scale, not about the
+architecture. At \SI{0.21}{\mega\nothing} parameters it has less than half the
+U-Net's capacity, and 240 synthetic training slices is far too little for a
+transformer trained from scratch with no pretraining---transformers lack the
+locality prior that lets a convolutional network learn from small datasets.
+The correct reading is that the ablation establishes the DC effect on both
+backbones and establishes nothing about their relative merits. Ranking the two
+from this experiment would repeat, in a new form, exactly the error of drawing
+architectural conclusions from an inadequately controlled comparison.
+
 \subsection{Architectural cost}
 
 \begin{table}[h]
