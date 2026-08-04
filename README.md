@@ -195,8 +195,8 @@ recovers only 0.46 dB of it. Data consistency recovers *all* of it and adds 0.72
 the magnitude baseline, because it is the only component that reaches phase: it operates
 in k-space, where phase isn't optional.
 
-**The SwinUNet arm is under-trained**, and is reported as such. It sits ~6 dB below the
-U-Net at every rung. That is a statement about 240 synthetic training slices and 0.21 M
+**The SwinUNet arm is under-trained**, and is reported as such. It sits below the U-Net at
+every rung — 6.4 dB at the magnitude baseline, and 4.0–4.3 dB once both are complex-valued. That is a statement about 240 synthetic training slices and 0.21 M
 parameters, not about the architecture — transformers lack the locality prior that lets a
 CNN learn from small data. This ablation establishes the DC effect on both backbones and
 establishes **nothing** about their relative merits.
