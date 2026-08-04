@@ -51,8 +51,8 @@ that the SwinUNet variant reached \SI{33.10}{\decibel} PSNR on the fastMRI
 single-coil knee benchmark, above a U-Net baseline at
 \SI{28.03}{\decibel}.
 
-This paper reports a systematic audit of the released implementation and a
-substantially revised system. The audit found that the released code could not
+This paper reports a systematic audit of my v1 implementation and a
+substantially revised system. The audit found that the v1 code could not
 execute: the SwinUNet could not be \emph{constructed} at its own documented
 configuration, because window partitioning assumed feature-map resolutions
 divisible by the window size and the third encoder stage is $20\times20$ with a
@@ -82,8 +82,7 @@ physics constraint rather than the network. A secondary finding is that
 complex-valued input on its own \emph{costs} \SI{2.14}{\decibel}, because the
 magnitude loss leaves phase unsupervised --- which is precisely the freedom the
 data-consistency projection removes. I do not restate the previously reported
-fastMRI figures as validated results: they are not reproducible from the
-released artifact, and the corrections to the sampling and metric definitions
+fastMRI figures as validated results: they are not reproducible from the v1 release, and the corrections to the sampling and metric definitions
 mean that numbers produced under the old protocol are not comparable to numbers
 produced under the new one. The revised system, its 267-test suite, and a
 synthetic data generator that makes the full pipeline runnable without the
@@ -143,8 +142,7 @@ was precomputed in \code{\_\_init\_\_}, the failure occurred at
 \begin{lstlisting}
 RuntimeError: shape '[1, 2, 8, 2, 8, 1]' is invalid for input of size 400
 \end{lstlisting}
-No forward pass through the reported architecture was possible from the released
-code. A separate misspelled module filename (\code{reproductibility.py}, imported
+No forward pass through the reported architecture was possible from the v1 code. A separate misspelled module filename (\code{reproductibility.py}, imported
 as \code{reproducibility}) made \code{import training} raise
 \code{ModuleNotFoundError}, and two methods on the inference pipeline were
 missing their \code{@classmethod} and \code{@staticmethod} decorators, so every
@@ -161,7 +159,7 @@ table, and exited with status~0.
 \subsection{Contributions}
 
 \begin{enumerate}[leftmargin=*]
-  \item \textbf{A reproducibility audit} of the released implementation,
+  \item \textbf{A reproducibility audit} of my v1 implementation,
         classifying 19 defects into those that prevent execution, those that
         run but silently disable a documented feature, and those that corrupt
         measurement. Each is characterised by mechanism and, where it affects
@@ -203,7 +201,7 @@ table, and exited with status~0.
 \label{sec:not-claimed}
 
 I do not report validated fastMRI benchmark results. The previously published
-figures cannot be reproduced from the released code, and the corrections
+figures cannot be reproduced from the v1 code, and the corrections
 described here---to the sampling mask, the metric definition, and the
 augmentation ordering---change what those numbers measure, so old and new
 results are not comparable. Producing new fastMRI numbers requires GPU-scale
@@ -237,7 +235,7 @@ al.~\cite{hammernik2018} unrolled a variational optimisation into a trainable
 network; Sriram et al.~\cite{sriram2020} extended this end to end with learned
 coil sensitivities. The common principle---that a reconstruction network should
 not be free to contradict the measurements---is the one this paper adopts, and
-is what the original implementation attempted but did not achieve.
+is what my v1 implementation attempted but did not achieve.
 
 \subsection{Transformers for reconstruction}
 
@@ -263,7 +261,7 @@ from respecting the acquisition physics.
 \label{sec:audit}
 % =====================================================================
 
-This section documents the defects found in the released implementation. It is
+This section documents the defects found in my v1 implementation. It is
 included because the failure modes are not idiosyncratic: a metric that depends
 on batch size, an undersampling mask that is denser than reported, and a
 physics module that is silently inert are mistakes any reconstruction project
@@ -412,7 +410,7 @@ Batch size & Gap (dB) & SD \\
 \bottomrule
 \end{tabular}
 \caption{Per-image PSNR minus the batch-MSE formulation, over 200 trials. The
-quantity being reported depends on a training hyperparameter. In the original
+quantity being reported depends on a training hyperparameter. In v1
 study the U-Net used batch size 8 and the SwinUNet batch size 6, a
 configuration difference worth \SI{0.10}{\decibel} of pure measurement artefact
 in the baseline's favour.}
@@ -424,8 +422,8 @@ A second issue compounds this: the peak signal value was hard-coded to
 so the denominator was wrong by a per-sample factor. Both are corrected in
 Section~\ref{sec:metrics}.
 
-\paragraph{Evidence in the original figures.} The training curves published with
-the prior study are reproduced in Figure~\ref{fig:prior-curves}, because they
+\paragraph{Evidence in my v1 figures.} The training curves published with
+v1 are reproduced in Figure~\ref{fig:prior-curves}, because they
 document these defects directly rather than merely being consistent with them.
 
 Three observations. First, the U-Net's SSIM panel oscillates between
@@ -445,7 +443,7 @@ formulation non-comparable (Table~\ref{tab:psnr}).
 Third, the labels disagree with the text they illustrate. The U-Net panel is
 tagged \code{ep30} but plots sixty epochs. The SwinUNet panel is tagged
 \code{lr5e-4}, while the released configuration for that model specifies
-\num{5e-5} and the prior study's ablation section reports that ``optimal
+\num{5e-5} and v1's ablation section reports that ``optimal
 performance'' was obtained at \num{8e-5}. Three different learning rates are
 attributed to the same result.
 
@@ -453,7 +451,7 @@ attributed to the same result.
 \centering
 \includegraphics[width=\textwidth]{figures/curves_unet_prior.jpg}\\[6pt]
 \includegraphics[width=\textwidth]{figures/curves_swinunet_prior.jpg}
-\caption{Training curves from the prior study: U-Net (top) and SwinUNet
+\caption{Training curves from v1: U-Net (top) and SwinUNet
 (bottom). Reproduced here as evidence for the measurement defects of
 Section~\ref{sec:audit}, not as results. Note the non-converging SSIM trace in
 the top-right panel against the smoothly descending loss beside it; the
@@ -487,7 +485,7 @@ a worse one.
 
 \subsubsection{Evidence in the qualitative results}
 
-The prior study's qualitative figure is reproduced as
+v1's qualitative figure is reproduced as
 Figure~\ref{fig:prior-recon}. Its annotations show the two metrics decoupling
 sharply: the third row is labelled \SI{32.97}{\decibel} PSNR with an SSIM of
 \num{0.5219}, while the first row is labelled \SI{35.20}{\decibel} with
@@ -500,7 +498,7 @@ normalisation error is one candidate explanation, and the fixed data range
 documented above is a known defect in the code that produced it; but the third
 row also visibly contains more high-frequency texture and stronger residual
 streaking than the first, which could account for some of the SSIM gap on its
-own. The two cannot be separated without the original weights, and those were
+own. The two cannot be separated without the v1 weights, and those were
 never released.
 
 That impossibility is the substantive point. A qualitative figure annotated with
@@ -517,19 +515,19 @@ largely absent from its prediction.
 \begin{figure}[p]
 \centering
 \includegraphics[width=0.88\textwidth]{figures/recon_grid_prior.jpg}
-\caption{Qualitative reconstructions from the prior study: zero-filled input
+\caption{Qualitative reconstructions from v1: zero-filled input
 (left), prediction (centre), fully sampled reference (right). Reproduced as
 audit evidence, not as results of the present system. The annotated metrics use
 the superseded definitions of Section~\ref{sec:audit} --- a fixed data range of
 \num{1.0} and a batch-averaged PSNR --- and cannot be recomputed, since the
-weights that produced them were never released and the released code cannot
+weights that produced them were never released and the v1 code cannot
 construct the architecture.}
 \label{fig:prior-recon}
 \end{figure}
 
 \subsection{Implications}
 
-The Class~1 defects establish that the released artifact cannot have produced
+The Class~1 defects establish that the v1 release cannot have produced
 the published figures; those numbers came from some other, unreleased state of
 the code. The Class~3 defects establish that even had it run, the reported
 quantities would not be comparable to published fastMRI results, because the
@@ -566,7 +564,7 @@ carry diagnostic information.
 \centering
 \includegraphics[width=0.62\textwidth]{figures/knee_examples.jpg}
 \caption{Coronal knee slices from the fastMRI single-coil dataset, reproduced
-from the prior study. The panels show zero-filled reconstructions exhibiting the
+from v1. The panels show zero-filled reconstructions exhibiting the
 blurring and coherent streaking characteristic of retrospective undersampling,
 alongside a fully sampled example (bottom right) in a different contrast:
 proton-density weighted without fat suppression, versus the fat-suppressed
@@ -769,7 +767,7 @@ instead of five. Mixed precision prefers bfloat16 where available, since fp16's
 five-bit exponent is inadequate for $k$-space, whose centre exceeds its
 periphery by several orders of magnitude; all Fourier transforms and all metrics
 are forced to fp32 regardless. An exponential moving average of the weights is
-maintained, and---unlike in the original---is actually used for validation,
+maintained, and---unlike in v1---is actually used for validation,
 checkpoint selection and inference.
 
 % =====================================================================
@@ -853,7 +851,7 @@ $\lambda$ when \num{1.0} is requested (corrected) & 0.9999 \\
 \end{tabular}
 \caption{Verification of the Fourier and data-consistency operators at float32
 precision. The second row is the property that makes the method
-physics-informed; it was not satisfied by the original implementation at any
+physics-informed; it was not satisfied by my v1 implementation at any
 tolerance, since that implementation was never invoked with data.}
 \label{tab:verification}
 \end{table}
@@ -951,7 +949,7 @@ Table~\ref{tab:cost} are measured from models that run.
 
 The suite comprises 267 tests covering \SI{88}{\percent} of statements and
 running in under a minute on CPU, organised
-so that each previously shipped defect has a corresponding regression test.
+so that each defect found in v1 has a corresponding regression test.
 Notable coverage:
 
 \begin{itemize}
@@ -971,7 +969,7 @@ Notable coverage:
 \end{itemize}
 
 Testing against real HDF5 files rather than mocks is deliberate. Every model
-test in the original suite passed, because none of them ever loaded a file, and
+test in my v1 suite passed, because none of them ever loaded a file, and
 the data-consistency path---which fails only when data flows through it---was
 never exercised.
 
@@ -988,7 +986,7 @@ since the projection would be mathematically invalid.
 \label{sec:protocol}
 
 fastMRI requires registration and a \SI{90}{\giga\byte} download, which means
-that without it nothing in the original repository could be exercised end to
+that without it nothing in my v1 repository could be exercised end to
 end. That gap is precisely how a data-consistency path that never received data
 shipped unnoticed. A generator is therefore included:
 
@@ -1124,7 +1122,7 @@ network must optimise through that degeneracy. Data consistency is the only
 component here that reaches phase, and it recovers the deficit and more.
 
 I deliberately do not restate the earlier benchmark figures as validated
-results. They are not reproducible from the released artifact, and the
+results. They are not reproducible from the v1 release, and the
 corrections described here change what the numbers measure. What is offered
 instead is a system in which the benchmark can be run under a protocol that is
 stated precisely, checked automatically, and traceable to a recorded commit. For

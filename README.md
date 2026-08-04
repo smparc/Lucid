@@ -38,10 +38,11 @@ inpainting.
 > very different inductive biases agreeing to within 0.24 dB points at the physics, not
 > the network. → [Results](#results)
 
-This repository is also the artifact of a **reproducibility audit**. The system it
-supersedes could not be executed at all: its flagship model could not be *constructed* at
-its own documented configuration, and its data-consistency module was never given data.
-Everything here is rebuilt, verified numerically, and tested.
+This repository is also the artifact of a **reproducibility audit I ran on my own earlier
+work**. I had considered v1 of this project finished; it turned out not to run at all. Its
+flagship model could not be *constructed* at its own documented configuration, and its
+data-consistency module was never given data. Everything here is rebuilt from that audit,
+verified numerically, and tested.
 → [The audit](#the-audit-what-changed-in-v2)
 
 ---
@@ -99,7 +100,7 @@ python main.py export    --ckpt outputs/swinunet/checkpoints/best.pt --format on
 python main.py curves    --run outputs/swinunet_dc
 ```
 
-Every command returns a non-zero exit code on failure. This is not a detail: the original
+Every command returns a non-zero exit code on failure. This is not a detail: my v1
 `test_models` caught every exception, printed `FAIL` into a table, and exited 0 — so CI
 stayed green while nothing worked.
 
@@ -234,11 +235,11 @@ windowed rather than global — the same property that makes it scale to higher 
 
 ### What is deliberately not claimed
 
-**No fastMRI benchmark numbers are quoted, and no trained weights are shipped.** The
-prior study's figures are not reproducible from its released artifact, and the corrections
-to the sampling mask and metric definitions mean numbers produced under the old protocol
-are not comparable to numbers produced under this one. Restating them as validated would
-be the same error over again. The tooling to regenerate them under a stated, automatically
+**No fastMRI benchmark numbers are quoted, and no trained weights are shipped.** My v1
+figures are not reproducible from the v1 code, and the corrections to the sampling mask
+and metric definitions mean numbers produced under that protocol are not comparable to
+numbers produced under this one. Carrying my own earlier figures forward as validated
+would be the same error over again. The tooling to regenerate them under a stated, automatically
 checked protocol is what ships instead.
 
 ### Reproducing
@@ -286,7 +287,7 @@ A hierarchical Swin Transformer in a U-Net encoder–decoder:
   zero-initialised output layer so training begins from the exact identity.
 
 Feature maps are padded to the window size, so any input resolution works and one trained
-model runs at any size. (The absence of that padding is what made the original model
+model runs at any size. (The absence of that padding is what made my v1 model
 unconstructable at its own documented config.)
 
 ### Baselines
@@ -405,7 +406,7 @@ pytest tests/ --cov --cov-report=term
 pytest tests/test_physics.py -v     # Fourier and data-consistency exactness
 ```
 
-Every previously shipped defect has a corresponding regression test. The suite covers:
+Every defect the audit found in v1 has a corresponding regression test. The suite covers:
 
 - **Physics exactness** — Fourier round-trip and unitarity; DC restoring measured
   coefficients; DC leaving unmeasured coefficients untouched; a perfect estimate being a
@@ -420,9 +421,9 @@ Every previously shipped defect has a corresponding regression test. The suite c
 - **Integration** — full training runs against real HDF5 volumes, with and without data
   consistency, plus resume fidelity.
 
-Testing against real HDF5 files rather than mocks is deliberate. Every model test in the
-original suite passed, because none of them ever loaded a file — and the data-consistency
-path, which fails only when data flows through it, was never exercised.
+Testing against real HDF5 files rather than mocks is deliberate. Every model test in my v1
+suite passed, because none of them ever loaded a file — and the data-consistency path,
+which fails only when data flows through it, was never exercised.
 
 CI runs four jobs on every push: `ruff` lint, the test matrix on Python 3.10/3.11/3.12, an
 architecture sanity forward pass, and an end-to-end training smoke test that generates
@@ -432,8 +433,9 @@ synthetic data, trains, verifies the run artifacts exist, and evaluates the chec
 
 ## The audit: what changed in v2
 
-The original codebase could not run. Three independent defects made every documented entry
-point fail.
+I wrote v1, considered it done, and later audited it. It could not run: three independent
+defects made every documented entry point fail. Everything below is my own code, found by
+auditing it rather than by being told.
 
 | Defect | Consequence |
 |---|---|
