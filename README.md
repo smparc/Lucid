@@ -473,7 +473,24 @@ auditing it rather than by being told.
 bootstrap CIs and paired permutation tests with Holm correction, DropPath, truncated-normal
 init, fused (SDPA) attention, gradient checkpointing, multi-acceleration training, TTA,
 MC-dropout uncertainty, schema-validated configs, a synthetic data generator, run manifests
-with git SHA, a model card, working CI, and 267 tests at 88% coverage.
+with git SHA, a model card, working CI, and 270 tests at 88% coverage.
+
+### Two more found on a later pass
+
+Both are the same species as the sixteen above — code that runs, produces
+plausible output, and is wrong.
+
+| Defect | Consequence |
+|---|---|
+| `CascadedNet.forward` skipped DC when `k_measured` was `None` | The audit fixed exactly this in `ResidualDCWrapper`, which now *raises*. The flagship model kept the silent version: hand it no measurements and it trains, the loss falls, the images look fine, and it is 2.4 dB worse with nothing reporting why. DC is now required unless `require_kspace=False` declares the no-physics ablation. |
+| `FastMRIKneeDataset._rng` used `np.random.default_rng()` in train mode | Fresh OS entropy per sample. `seed_worker` seeds only the *legacy* `np.random` global, which a `Generator` built by `default_rng()` ignores — so no seed anywhere in the codebase reached the undersampling masks or the augmentation, and a run advertised as reproducible was not. Two modules each documented the other as handling it. The stream is now `SeedSequence([seed, epoch, worker_id, idx])`, advanced by `Trainer` via `set_epoch`. |
+
+Verified rather than argued: two full runs of `configs/smoke.yaml` with two
+persistent workers now agree on **every** logged metric — train loss, val loss,
+PSNR, SSIM, NMSE, the learnt DC λ per stage — differing only in wall-clock
+seconds. Under the old generator, drawing twice under identical seeding gave
+different numbers, which is the one-line demonstration that no seed was reaching
+the masks.
 
 ---
 
