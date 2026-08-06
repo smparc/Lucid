@@ -277,8 +277,16 @@ class FastMRIKneeDataset(Dataset):
         self.normalization = normalization
         self.cache_enabled = bool(cache)
         self._cache: dict[int, tuple[torch.Tensor, float]] = {}
+
         # Advanced by `set_epoch`; part of the training RNG stream's identity.
-        self._epoch = 0
+        #
+        # Shared memory, not a plain int. With `persistent_workers=True` each
+        # DataLoader worker holds its own copy of this dataset for the whole
+        # run, so assigning to an ordinary attribute in the main process would
+        # never reach them — every epoch would silently replay epoch 0's masks,
+        # which is the failure this counter exists to prevent. A shared tensor is
+        # visible to the workers under both `fork` and `spawn`.
+        self._epoch_buf = torch.zeros(1, dtype=torch.int64).share_memory_()
 
         if undersample_domain not in ("cropped", "full"):
             raise ValueError(
@@ -371,6 +379,10 @@ class FastMRIKneeDataset(Dataset):
     # Loading
     # ------------------------------------------------------------------
 
+    @property
+    def epoch(self) -> int:
+        return int(self._epoch_buf[0])
+
     def set_epoch(self, epoch: int) -> None:
         """Advance the training RNG stream.
 
@@ -379,7 +391,7 @@ class FastMRIKneeDataset(Dataset):
         the identical masks and augmentations, which turns a stochastic
         augmentation policy into a fixed one.
         """
-        self._epoch = int(epoch)
+        self._epoch_buf[0] = int(epoch)
 
     def _rng(self, idx: int) -> np.random.Generator:
         """
@@ -412,7 +424,7 @@ class FastMRIKneeDataset(Dataset):
         worker = torch.utils.data.get_worker_info()
         worker_id = 0 if worker is None else int(worker.id)
         return np.random.default_rng(
-            np.random.SeedSequence([self.seed, self._epoch, worker_id, idx])
+            np.random.SeedSequence([self.seed, self.epoch, worker_id, idx])
         )
 
     def _load_complex_image(self, idx: int) -> tuple[torch.Tensor, float]:

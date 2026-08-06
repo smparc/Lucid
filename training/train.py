@@ -386,6 +386,7 @@ class Trainer:
     def train_one_epoch(self, loader: DataLoader, epoch: int) -> dict[str, float]:
         """Run one training epoch. Returns the mean loss and its components."""
         self.model.train()
+        _set_dataset_epoch(loader, epoch)
         grad_clip = float(self.cfg.training.get("gradient_clip", 1.0))
         log_interval = int(self.cfg.logging.get("log_interval", 10))
         accum = self.grad_accum_steps
