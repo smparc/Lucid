@@ -9,7 +9,7 @@ Swin Transformer, constrained at every step by the physics of the acquisition.*
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-3776ab.svg?logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![PyTorch 2.0+](https://img.shields.io/badge/pytorch-2.0%2B-ee4c2c.svg?logo=pytorch&logoColor=white)](https://pytorch.org/)
-[![Tests](https://img.shields.io/badge/tests-267%20passing-2ea44f.svg)](#testing)
+[![Tests](https://img.shields.io/badge/tests-270%20passing-2ea44f.svg)](#testing)
 [![Coverage](https://img.shields.io/badge/coverage-88%25-2ea44f.svg)](#testing)
 [![Paper](https://img.shields.io/badge/paper-24%20pages-8a2be2.svg)](paper/paper.pdf)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
@@ -401,7 +401,7 @@ docker run --gpus all -v ./data:/app/data -v ./outputs:/app/outputs \
 ## Testing
 
 ```bash
-pytest tests/ -q                    # 267 tests, under a minute on CPU, 88% coverage
+pytest tests/ -q                    # 270 tests, under a minute on CPU, 88% coverage
 pytest tests/ --cov --cov-report=term
 pytest tests/test_physics.py -v     # Fourier and data-consistency exactness
 ```
@@ -534,7 +534,7 @@ the masks.
 ├── paper/                    # LaTeX source, figures and built PDF (24 pp.)
 ├── notebooks/                # Results analysis and figure regeneration
 ├── scripts/                  # Synthetic fastMRI-layout data generator
-├── tests/                    # 267 tests, 88% coverage
+├── tests/                    # 270 tests, 88% coverage
 ├── MODEL_CARD.md             # Intended use, factors, limitations
 └── Dockerfile                # Multi-stage CUDA / CPU image
 ```
