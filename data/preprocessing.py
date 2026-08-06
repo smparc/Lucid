@@ -277,6 +277,8 @@ class FastMRIKneeDataset(Dataset):
         self.normalization = normalization
         self.cache_enabled = bool(cache)
         self._cache: dict[int, tuple[torch.Tensor, float]] = {}
+        # Advanced by `set_epoch`; part of the training RNG stream's identity.
+        self._epoch = 0
 
         if undersample_domain not in ("cropped", "full"):
             raise ValueError(
@@ -369,6 +371,16 @@ class FastMRIKneeDataset(Dataset):
     # Loading
     # ------------------------------------------------------------------
 
+    def set_epoch(self, epoch: int) -> None:
+        """Advance the training RNG stream.
+
+        Called by the trainer once per epoch, the same contract as
+        ``DistributedSampler.set_epoch``. Without it every epoch would replay
+        the identical masks and augmentations, which turns a stochastic
+        augmentation policy into a fixed one.
+        """
+        self._epoch = int(epoch)
+
     def _rng(self, idx: int) -> np.random.Generator:
         """
         RNG for sample ``idx``.
@@ -377,13 +389,31 @@ class FastMRIKneeDataset(Dataset):
         validation set is byte-identical on every epoch and every run — without
         this, "val loss improved" can just mean "this epoch drew easier masks".
 
-        In train mode entropy comes from the OS, so each epoch presents a fresh
-        mask and a fresh augmentation. Per-worker seeding is handled by
-        ``utils.reproducibility.seed_worker``.
+        In train mode the stream is a pure function of
+        ``(seed, epoch, worker_id, idx)``: fresh masks every epoch, decorrelated
+        across workers, and still exactly reproducible from the run's seed.
+
+        This used to be ``np.random.default_rng()`` — fresh OS entropy on every
+        call. Two modules each documented the other as handling it:
+        ``seed_worker`` claimed to seed "the undersampling masks drawn in
+        ``FastMRIKneeDataset.__getitem__``", and this docstring claimed
+        per-worker seeding was ``seed_worker``'s job. Neither was true.
+        ``default_rng()`` with no argument reads OS entropy and is entirely
+        unaffected by ``np.random.seed``, which is all ``seed_worker`` sets — so
+        no seed anywhere in the codebase reached the masks or the augmentation.
+        A run advertised as reproducible was not.
         """
-        if self.train:
-            return np.random.default_rng()
-        return np.random.default_rng(self.seed + idx)
+        if not self.train:
+            return np.random.default_rng(self.seed + idx)
+
+        # SeedSequence rather than arithmetic on the seed: adding or XOR-ing
+        # integer seeds makes distinct (epoch, worker, idx) triples collide, and
+        # colliding streams mean two samples in one batch drawing the same mask.
+        worker = torch.utils.data.get_worker_info()
+        worker_id = 0 if worker is None else int(worker.id)
+        return np.random.default_rng(
+            np.random.SeedSequence([self.seed, self._epoch, worker_id, idx])
+        )
 
     def _load_complex_image(self, idx: int) -> tuple[torch.Tensor, float]:
         """

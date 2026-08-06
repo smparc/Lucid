@@ -84,8 +84,16 @@ def seed_worker(worker_id: int) -> None:
 
     PyTorch already offsets ``torch``'s seed per worker, but it does *not* touch
     ``numpy`` or ``random``. Without this, N workers each produce an identical
-    stream of numpy random numbers, which silently correlates the undersampling
-    masks drawn in ``FastMRIKneeDataset.__getitem__`` across the batch.
+    stream of numpy random numbers.
+
+    Scope, stated precisely because getting this wrong is invisible: this seeds
+    the **legacy global** generators — ``np.random.*`` and ``random.*``. It has
+    no effect whatsoever on a ``np.random.Generator`` built by
+    ``np.random.default_rng()``, which reads OS entropy directly. Anything that
+    needs a reproducible *and* per-worker-distinct stream must derive its own
+    generator from an explicit seed, as ``FastMRIKneeDataset._rng`` now does via
+    ``SeedSequence([seed, epoch, worker_id, idx])``. This docstring previously
+    claimed to cover that dataset's undersampling masks; it never did.
     """
     worker_seed = torch.initial_seed() % 2**32
     np.random.seed(worker_seed)
