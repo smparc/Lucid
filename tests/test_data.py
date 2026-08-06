@@ -209,16 +209,76 @@ class TestDataset:
         assert torch.equal(ds[0]["mask"], ds[0]["mask"])
         assert torch.equal(ds[1]["image"], ds[1]["image"])
 
-    def test_train_masks_are_resampled(self, synthetic_data_dir):
+    def test_train_masks_are_resampled_across_epochs(self, synthetic_data_dir):
+        """Fresh masks every epoch — but deterministic *within* one.
+
+        An epoch visits each index exactly once, so the meaningful axis of
+        variation is the epoch, not repeated access. Varying on repeated access
+        instead is what the old `np.random.default_rng()` did, and it bought
+        nothing real while costing reproducibility outright.
+        """
         ds = FastMRIKneeDataset(synthetic_data_dir, crop_size=(64, 64), train=True)
-        masks = [ds[0]["mask"] for _ in range(8)]
+
+        masks = []
+        for epoch in range(8):
+            ds.set_epoch(epoch)
+            masks.append(ds[0]["mask"])
         assert not all(torch.equal(masks[0], m) for m in masks[1:])
+
+        # Within one epoch the same index must give the same mask.
+        ds.set_epoch(3)
+        assert torch.equal(ds[0]["mask"], ds[0]["mask"])
+
+    def test_training_stream_is_reproducible_from_the_seed(self, synthetic_data_dir):
+        """The property the run manifest implicitly claims.
+
+        `_rng` used to be `np.random.default_rng()` — fresh OS entropy per call,
+        unreachable by `seed_everything` or `seed_worker` (both of which set only
+        the *legacy* numpy global state). No seed anywhere in the codebase
+        touched the undersampling masks or the augmentation, so a run advertised
+        as reproducible was not, and two runs of the same config differed by
+        however much the mask draw happened to matter.
+        """
+        def stream(seed: int) -> list[torch.Tensor]:
+            ds = FastMRIKneeDataset(
+                synthetic_data_dir, crop_size=(64, 64), train=True, augment=True, seed=seed
+            )
+            out = []
+            for epoch in range(3):
+                ds.set_epoch(epoch)
+                out.extend(ds[i]["mask"] for i in range(min(2, len(ds))))
+            return out
+
+        first, second = stream(1234), stream(1234)
+        assert all(torch.equal(a, b) for a, b in zip(first, second))
+
+        different = stream(4321)
+        assert not all(torch.equal(a, b) for a, b in zip(first, different))
+
+    def test_samples_within_a_batch_do_not_share_a_mask(self, synthetic_data_dir):
+        """Distinct (epoch, worker, index) triples must give distinct streams.
+
+        Deriving worker/epoch/index seeds by addition or XOR makes triples
+        collide, and colliding streams mean two slices in one batch undersampled
+        identically — which quietly correlates the batch and makes the effective
+        batch size smaller than it looks.
+        """
+        ds = FastMRIKneeDataset(
+            synthetic_data_dir, crop_size=(64, 64), train=True, acceleration=4
+        )
+        if len(ds) < 2:
+            pytest.skip("fixture has a single sample")
+        ds.set_epoch(0)
+        assert not torch.equal(ds[0]["mask"], ds[1]["mask"])
 
     def test_multi_acceleration_sampling(self, synthetic_data_dir):
         ds = FastMRIKneeDataset(
             synthetic_data_dir, crop_size=(64, 64), acceleration=[4, 8], train=True
         )
-        seen = {int(ds[0]["acceleration"]) for _ in range(40)}
+        seen = set()
+        for epoch in range(40):
+            ds.set_epoch(epoch)
+            seen.add(int(ds[0]["acceleration"]))
         assert seen == {4, 8}
 
     def test_slice_modes(self, synthetic_data_dir):

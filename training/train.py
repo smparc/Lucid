@@ -76,6 +76,28 @@ def ssim_metric(pred: torch.Tensor, target: torch.Tensor, data_range=None) -> fl
         return float(ssim(pred, target, data_range=data_range))
 
 
+def _set_dataset_epoch(loader: DataLoader, epoch: int) -> bool:
+    """Advance a loader's dataset RNG stream, unwrapping ``Subset`` if needed.
+
+    Returns whether an epoch counter was found. The unwrapping matters: when no
+    ``val_dir`` exists the trainer wraps both halves in ``Subset``, and a
+    ``getattr(loader.dataset, "set_epoch")`` would then find nothing and
+    silently leave every epoch replaying epoch 0's masks — turning a stochastic
+    augmentation policy into a fixed one with no error and no log line.
+    """
+    dataset = getattr(loader, "dataset", None)
+    # `Subset` may nest, so follow the chain rather than unwrapping once.
+    for _ in range(8):
+        if dataset is None or hasattr(dataset, "set_epoch"):
+            break
+        dataset = getattr(dataset, "dataset", None)
+
+    if dataset is None or not hasattr(dataset, "set_epoch"):
+        return False
+    dataset.set_epoch(epoch)
+    return True
+
+
 # ---------------------------------------------------------------------------
 # Trainer
 # ---------------------------------------------------------------------------
