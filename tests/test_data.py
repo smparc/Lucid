@@ -250,10 +250,10 @@ class TestDataset:
             return out
 
         first, second = stream(1234), stream(1234)
-        assert all(torch.equal(a, b) for a, b in zip(first, second))
+        assert all(torch.equal(a, b) for a, b in zip(first, second, strict=True))
 
         different = stream(4321)
-        assert not all(torch.equal(a, b) for a, b in zip(first, different))
+        assert not all(torch.equal(a, b) for a, b in zip(first, different, strict=True))
 
     def test_samples_within_a_batch_do_not_share_a_mask(self, synthetic_data_dir):
         """Distinct (epoch, worker, index) triples must give distinct streams.
