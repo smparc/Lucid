@@ -206,6 +206,18 @@ class CascadedNet(nn.Module):
         ``"complex"`` returns ``(B, 2, H, W)``; ``"magnitude"`` returns
         ``(B, 1, H, W)``, which is what the image-domain losses and metrics
         consume.
+    require_kspace
+        Raise if ``forward`` is called without measurements, instead of quietly
+        degrading to a plain cascade of denoisers. Default True.
+
+        This is the same defect the v1 audit found in ``ResidualDCWrapper``,
+        which skipped DC whenever ``k_measured`` was None — so the trainer,
+        which passed only the image, turned ``data_consistency.enabled: true``
+        into a complete no-op while every test still passed and every loss curve
+        still fell. Running a cascade without DC is a legitimate *ablation*, so
+        the capability stays; it just has to be asked for, because a
+        physics-informed model that silently drops its physics produces
+        plausible images and a 2.4 dB deficit nobody attributes to a bug.
     """
 
     def __init__(
@@ -215,6 +227,7 @@ class CascadedNet(nn.Module):
         share_weights: bool = False,
         hard_dc: bool = False,
         output: str = "magnitude",
+        require_kspace: bool = True,
     ):
         super().__init__()
         if n_cascades < 1:
@@ -225,6 +238,7 @@ class CascadedNet(nn.Module):
         self.n_cascades = n_cascades
         self.share_weights = share_weights
         self.output = output
+        self.require_kspace = require_kspace
 
         if share_weights:
             shared = denoiser_fn()
@@ -257,13 +271,25 @@ class CascadedNet(nn.Module):
         x_input
             ``(B, 2, H, W)`` zero-filled complex reconstruction.
         k_measured, mask
-            Measured k-space and its sampling mask. If either is None the DC
-            steps are skipped and the model degrades to a plain cascade of
-            denoisers — useful for ablations, and loudly documented rather than
-            silently assumed.
+            Measured k-space and its sampling mask. If either is None, this
+            raises unless the cascade was built with ``require_kspace=False``,
+            in which case the DC steps are skipped and the model degrades to a
+            plain cascade of denoisers.
         """
         x = x_input
         use_dc = k_measured is not None and mask is not None
+
+        if not use_dc and self.require_kspace:
+            missing = "k_measured" if k_measured is None else "mask"
+            raise ValueError(
+                f"CascadedNet requires measurements to enforce data consistency, but "
+                f"{missing} was None. Set data.return_kspace=true in the config, or "
+                f"build the cascade with require_kspace=False if you intend the "
+                f"no-physics ablation. (Silently skipping DC here is what made the "
+                f"original ResidualDCWrapper a no-op: it trains, the loss falls, the "
+                f"images look plausible, and the model is 2.4 dB worse for no visible "
+                f"reason.)"
+            )
 
         for i in range(self.n_cascades):
             x = self._net(i)(x)

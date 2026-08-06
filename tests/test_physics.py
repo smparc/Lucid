@@ -201,9 +201,28 @@ class TestCascade:
             out = net(ifft2c_chan(k_meas), k_meas, mask)
         assert ((fft2c_chan(out) - k_meas) * mask).abs().max() < 1e-3
 
-    def test_runs_without_kspace_for_ablation(self):
-        net = CascadedNet(self._factory, n_cascades=2)
+    def test_runs_without_kspace_only_when_asked_to(self):
+        """The no-physics ablation must be a declared configuration."""
+        net = CascadedNet(self._factory, n_cascades=2, require_kspace=False)
         assert net(torch.randn(1, 2, 32, 32)).shape == (1, 1, 32, 32)
+
+    def test_missing_kspace_raises_by_default(self):
+        """The exact silent failure the v1 audit found in ResidualDCWrapper.
+
+        A cascade handed no measurements still trains, still produces a falling
+        loss curve, and still generates plausible images — it is just 2.4 dB
+        worse, with nothing anywhere reporting why. Only an exception catches it.
+        """
+        net = CascadedNet(self._factory, n_cascades=2)
+        x = torch.randn(1, 2, 32, 32)
+        mask = (torch.rand(1, 1, 1, 32) < 0.4).float()
+
+        with pytest.raises(ValueError, match="requires measurements"):
+            net(x)
+        with pytest.raises(ValueError, match="mask was None"):
+            net(x, fft2c_chan(x) * mask, None)
+        with pytest.raises(ValueError, match="k_measured was None"):
+            net(x, None, mask)
 
     def test_gradients_flow_through_dc(self):
         net = CascadedNet(self._factory, n_cascades=2)
