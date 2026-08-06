@@ -355,7 +355,7 @@ the projection would be invalid.
 | Losses | L1 / Charbonnier, SSIM, k-space frequency, Sobel edge, VGG perceptual |
 | Checkpointing | Top-k *by monitored metric*, plus `best.pt` and `last.pt` |
 | Resume | Optimiser, scheduler, scaler, EMA, patience and best score |
-| Reproducibility | Per-worker seeding; manifest records git SHA and hardware |
+| Reproducibility | Seeded per (seed, epoch, worker, index); manifest records git SHA and hardware |
 | Failure analysis | Worst-slice reporting and per-acceleration breakdown |
 
 ---
